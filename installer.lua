@@ -1,5 +1,5 @@
 local REPOSITORY = "andressolanobaez-beep/repositorio-del-OS-de-LUA-de-un-mod-de-CC-Twenked"
-local REVISION = "03dc3ca1d818b3ba144f02366baba9f2445e983b"
+local REVISION = "42f10ca9b98d5aba2f924424db36a6cb8ccb202c"
 local RAW_BASE = "https://raw.githubusercontent.com/" .. REPOSITORY .. "/" .. REVISION .. "/"
 local INSTALL_DIR = "disk"
 local SYSTEM_ROOT = "disk2"
@@ -12,10 +12,15 @@ local files = {
     {source = "disk_manager.lua", root = SYSTEM_ROOT, target = "disk_manager.lua"},
     {source = "buzzer.lua", root = SYSTEM_ROOT, target = "buzzer.lua"},
     {source = "importing.txt", root = SYSTEM_ROOT, target = "importing.txt", preserve_existing = true},
+    {source = "apps/adivina.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/adivina.app"},
     {source = "apps/archivador.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/archivador.app"},
+    {source = "apps/bloc.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/bloc.app"},
+    {source = "apps/calculadora.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/calculadora.app"},
     {source = "apps/hardware.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/hardware.app"},
     {source = "apps/hola.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/hola.app"},
     {source = "apps/notas.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/notas.app"},
+    {source = "apps/reloj.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/reloj.app"},
+    {source = "apps/tres_en_raya.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/tres_en_raya.app"},
     {source = "apps/terminal.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/terminal.app"}
 }
 
