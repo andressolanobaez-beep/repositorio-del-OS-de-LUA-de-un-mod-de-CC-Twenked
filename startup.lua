@@ -107,9 +107,10 @@ _G.write = function(value)
     write_wrapped(tostring(value or ""), false)
 end
 
-local shell_chunk, shell_load_error = loadfile("shell.py")
+local shell_path = fs.exists("/disk2/shell.py") and "/disk2/shell.py" or "shell.py"
+local shell_chunk, shell_load_error = loadfile(shell_path)
 if not shell_chunk then
-    error("No se pudo cargar shell.py: " .. tostring(shell_load_error))
+    error("No se pudo cargar " .. shell_path .. ": " .. tostring(shell_load_error))
 end
 local shell_ok, shell_api = pcall(shell_chunk)
 if not shell_ok then

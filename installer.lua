@@ -1,6 +1,6 @@
 local REPOSITORY = "andressolanobaez-beep/repositorio-del-OS-de-LUA-de-un-mod-de-CC-Twenked"
-local BRANCH = "main"
-local RAW_BASE = "https://raw.githubusercontent.com/" .. REPOSITORY .. "/" .. BRANCH .. "/"
+local REVISION = "e79e31998f4eb22eca575e17dc9e84f962fede10"
+local RAW_BASE = "https://raw.githubusercontent.com/" .. REPOSITORY .. "/" .. REVISION .. "/"
 local INSTALL_DIR = "disk"
 local SYSTEM_ROOT = "disk2"
 local SYSTEM_APPS_DIR = "apps/candos"
@@ -16,8 +16,7 @@ local files = {
     {source = "apps/hardware.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/hardware.app"},
     {source = "apps/hola.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/hola.app"},
     {source = "apps/notas.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/notas.app"},
-    {source = "apps/terminal.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/terminal.app"},
-    {source = "installer.lua", root = INSTALL_DIR, target = "installer.lua"}
+    {source = "apps/terminal.app", root = SYSTEM_ROOT, target = SYSTEM_APPS_DIR .. "/terminal.app"}
 }
 
 local function stop(message)
@@ -58,6 +57,22 @@ local function write_file(path, contents)
     file.write(contents)
     file.close()
     return true
+end
+
+local function read_running_installer()
+    local path = shell.getRunningProgram()
+    if not path or path == "" then
+        return nil, "No se pudo identificar el archivo installer.lua en ejecucion."
+    end
+
+    local file, open_error = fs.open(path, "r")
+    if not file then
+        return nil, "No se pudo leer el instalador actual: " ..
+            tostring(open_error or path)
+    end
+    local contents = file.readAll()
+    file.close()
+    return contents
 end
 
 if not http or type(http.get) ~= "function" then
@@ -120,6 +135,19 @@ for index, entry in ipairs(files) do
         print("OK")
     end
 end
+
+local installer_source, installer_error = read_running_installer()
+if not installer_source then
+    stop(installer_error .. "\nNo se escribieron archivos.")
+    return
+end
+
+downloaded[#downloaded + 1] = {
+    target = fs.combine(INSTALL_DIR, "installer.lua"),
+    contents = installer_source,
+    source = "installer.lua",
+    preserve_existing = false
+}
 
 downloaded[#downloaded + 1] = {
     target = boot_path,

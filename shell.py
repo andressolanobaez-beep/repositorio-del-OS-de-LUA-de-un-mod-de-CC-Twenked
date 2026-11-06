@@ -3,14 +3,24 @@
 
 local native_shell = shell
 local current_dir = fs.combine(native_shell.dir() or "")
-local config_dir = "/.candOS"
+local system_root = current_dir
+local config_dir = fs.combine(system_root, ".candOS")
 local path_file = fs.combine(config_dir, "path.txt")
-local importing_file = "/importing.txt"
+local importing_file = fs.combine(system_root, "importing.txt")
 local custom_paths = {}
 local api = {}
 
 local function display_path(path)
     path = fs.combine(path or "")
+    if system_root ~= "" then
+        if path == system_root then
+            return "/"
+        end
+        local prefix = system_root .. "/"
+        if path:sub(1, #prefix) == prefix then
+            path = path:sub(#prefix + 1)
+        end
+    end
     return path == "" and "/" or "/" .. path
 end
 
@@ -18,7 +28,7 @@ local function resolve(path)
     path = tostring(path or "")
     path = path:gsub("\\", "/")
     if path:sub(1, 1) == "/" then
-        return fs.combine(path:sub(2))
+        return fs.combine(system_root, path:sub(2))
     end
     return fs.combine(current_dir, path)
 end
@@ -86,7 +96,7 @@ local function get_path_entries()
         end
     end
 
-    add("apps", "computador")
+    add(fs.combine(system_root, "apps"), "computador")
     for _, path in ipairs(custom_paths) do
         add(path, "computador")
     end
