@@ -1,5 +1,5 @@
 local REPOSITORY = "andressolanobaez-beep/repositorio-del-OS-de-LUA-de-un-mod-de-CC-Twenked"
-local REVISION = "b07b57a84395ccb72d9d6898b55a44a3b143fcf0"
+local REVISION = "ac534062b757ae9c40cc02aea57b6a45d1493ce5"
 local RAW_BASE = "https://raw.githubusercontent.com/" .. REPOSITORY .. "/" .. REVISION .. "/"
 local INSTALL_DIR = "disk"
 local SYSTEM_ROOT = "disk2"
