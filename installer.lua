@@ -31,13 +31,15 @@ local app_names = {
     "tareas", "temporizador", "terminal", "tres_en_raya"
 }
 
-for _, name in ipairs(app_names) do
+for index, name in ipairs(app_names) do
     local package = name .. ".app"
+    local app_root = index <= math.floor(#app_names / 2)
+        and INSTALL_DIR or SYSTEM_ROOT
     for _, member in ipairs({"main.app", "icon.app"}) do
         local source = "apps/" .. package .. "/" .. member
         files[#files + 1] = {
             source = source,
-            root = SYSTEM_ROOT,
+            root = app_root,
             target = SYSTEM_APPS_DIR .. "/" .. package .. "/" .. member
         }
     end
@@ -128,7 +130,8 @@ local function confirm_installation()
     print("CANDOS se instalara asi:")
     print("  /" .. INSTALL_DIR .. "/startup.lua: lanzador de inicio")
     print("  /" .. SYSTEM_ROOT .. "/boot: sistema operativo y librerias")
-    print("  /" .. SYSTEM_ROOT .. "/apps: aplicaciones en carpetas .app")
+    print("  /" .. INSTALL_DIR .. "/apps: 15 aplicaciones en carpetas .app")
+    print("  /" .. SYSTEM_ROOT .. "/apps: 15 aplicaciones en carpetas .app")
     print("  /" .. SYSTEM_ROOT .. "/" .. SYSTEM_FILES_DIR .. ": archivos del usuario")
     print("  /" .. INSTALL_DIR .. "/installer.lua: instalador para actualizar")
     print("La BIOS en /disk3 no se consulta ni se modifica.")
@@ -265,7 +268,9 @@ end
 print("")
 print("CANDOS se instalo correctamente.")
 print("El sistema esta en /" .. SYSTEM_ROOT .. "/" .. SYSTEM_BOOT_DIR .. ".")
-print("Tus apps estan en /" .. SYSTEM_ROOT .. "/" .. SYSTEM_APPS_DIR .. ".")
+print("La mitad de tus apps esta en /" .. INSTALL_DIR .. "/" ..
+    SYSTEM_APPS_DIR .. " y la otra mitad en /" .. SYSTEM_ROOT .. "/" ..
+    SYSTEM_APPS_DIR .. ".")
 print("Tus archivos nuevos se guardan en /" .. SYSTEM_ROOT .. "/" ..
     SYSTEM_FILES_DIR .. ".")
 print("Las apps antiguas reemplazadas se respaldan en /" ..
