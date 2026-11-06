@@ -1,274 +1,354 @@
---[[
-  ESPAndOS-to-CC-Tweaked Terminal Bridge
-  Adaptado para: CC: Tweaked 1.21.1 + Fabric
-  Redirige la terminal completa a una pantalla externa
-  
-  Hardware esperado:
-  - Monitor conectado arriba (peripheral "monitor")
-  - 2 Disk Drives conectados a los lados (peripheral "disk_drive")
-  - Speaker/Sensor atrás para buzzer (peripheral "speaker")
-  
-  Este archivo debe colocarse como startup.lua en el computador
---]]
+-- CANDOS: lanzador grafico de aplicaciones Lua para CC: Tweaked.
+-- Hardware previsto: monitor grande arriba, lectoras a izquierda/derecha,
+-- y speaker atras. Los archivos .app contienen codigo Lua normal.
 
--- Configuración de hardware
-local MONITOR_POSITION = "top"
-local SPEAKER_POSITION = "back"
-local DISK_SIDES = {"left", "right"}
-
--- Función para encontrar y envolver periféricos
-local function setup_peripheral(name, side)
-    local perip = peripheral.find(name)
-    if not perip and side then
-        if peripheral.isPresent(side) then
-            perip = peripheral.wrap(side)
-        end
-    end
-    return perip
+local monitor, monitor_side
+if peripheral.getType("top") == "monitor" then
+    monitor = peripheral.wrap("top")
+    monitor_side = "top"
+else
+    monitor, monitor_side = peripheral.find("monitor")
 end
 
--- Inicializar monitor
-local monitor = setup_peripheral("monitor", MONITOR_POSITION)
-if not monitor then
-    error("No se encontró monitor peripheral en posición: " .. tostring(MONITOR_POSITION))
+local speaker
+if peripheral.getType("back") == "speaker" then
+    speaker = peripheral.wrap("back")
+else
+    speaker = peripheral.find("speaker")
 end
 
--- Configurar monitor
-monitor.setTextScale(1)
-monitor.clear()
-monitor.setCursorPos(1, 1)
+local original_terminal = term.current()
+local screen_width, screen_height
 
--- Redirigir stdout/stderr a el monitor
--- En CC: Tweaked, term.redirect() redirige la terminal
-local old_term = term.current()
-term.redirect(monitor)
-
--- Inicializar speaker/buzzer
-local speaker = setup_peripheral("speaker", SPEAKER_POSITION)
-local buzzer_enabled = speaker ~= nil
-
--- Estado del buzzer
-buzzer_state = {
-    frequency = 440,
-    duration = 0.1,
-    active = false
-}
-
--- Función para reproducir tono 8-bit
-local function play_tone(freq, duration)
-    if not buzzer_enabled then return end
-    freq = freq or 440
-    duration = duration or 0.1
-    
-    -- En CC: Tweaked, speaker.playTone(freq, duration)
-    if speaker.playTone then
-        speaker.playTone(freq, duration)
-    else
-        -- Fallback: parpadeo de monitor o simple delay
-        monitor.setBackgroundColor(colors.gray)
-        monitor.clear()
-        os.sleep(duration)
-        monitor.setBackgroundColor(colors.black)
-        monitor.clear()
-    end
-end
-
--- Función para reproducir escala 8-bit (tipo ESP32 buzzer)
-local function play_scale()
-    -- Notas 8-bit clásicas (C4 a C5): Do, Do#, Re, Re#, Mi, Fa, Fa#, Sol
-    local notes = {262, 277, 294, 311, 330, 349, 370, 392, 415, 440, 466, 494, 523}
-    for _, freq in ipairs(notes) do
-        play_tone(freq, 0.05)
-        os.sleep(0.02)
-    end
-end
-
--- Función para escribir en monitor (ya redirigido)
-local function cprint(...)
-    local args = {...}
-    local text = table.concat(args, " ")
-    monitor.write(text)
-    -- También mantener sincronizado con la consola original si es necesario
-    -- term.write(text) --esto causaría recursión, así que omitimos
-end
-
--- Función para limpiar pantalla
-local function clear_screen()
+if monitor then
+    monitor.setTextScale(0.5)
+    monitor.setBackgroundColor(colors.black)
+    monitor.setTextColor(colors.white)
     monitor.clear()
     monitor.setCursorPos(1, 1)
-    -- También limpiar la "consola" original redirectada
-    term.clear()
-    term.setCursorPos(1, 1)
+    screen_width, screen_height = monitor.getSize()
+    term.redirect(monitor)
 end
 
--- Función para mostrar el "ESPAndOS" banner
-local function show_banner()
-    clear_screen()
-    cprint("=== ESPAndOS Bridge for CC: Tweaked ===")
-    cprint("=== Adaptado de MicroPython ESP32 ===")
-    cprint("")
-    cprint("Terminal redirigida a pantalla externa")
-    cprint("Disqueteras: Lado izquierdo y derecho")
-    cprint("Buzzer: Altavoz atrás")
-    cprint("")
-    cprint("Comandos disponibles:")
-    cprint("  help    - Mostrar ayuda")
-    cprint("  cls     - Limpiar pantalla")
-    cprint("  tone    - Reproducir tono")
-    cprint("  scale   - Reproducir escala 8-bit")
-    cprint("  reboot  - Reiniciar sistema")
-    cprint("  dir     - Listar disqueteras")
-    cprint("  exit    - Salir")
-    cprint("")
-    cprint("Usa 'wget URL' para descargar programas como en MicroPython")
-end
-
--- Función principal de ayuda
-local function show_help()
-    clear_screen()
-    cprint("=== AYUDA - ESPAndOS Bridge ===")
-    cprint("")
-    cprint("Comandos del sistema:")
-    cprint("  help    - Esta ayuda")
-    cprint("  cls     - Limpiar pantalla")
-    cprint("  clear   - Igual que cls")
-    cprint("")
-    cprint("Comandos de audio:")
-    cprint("  tone    - Reproducir tono simple")
-    cprint("  scale   - Reproducir escala completa 8-bit")
-    cprint("")
-    cprint("Comandos de archivos:")
-    cprint("  dir     - Mostrar contenido de disqueteras")
-    cprint("  load    - Cargar programa desde disco")
-    cprint("")
-    cprint("Comandos del sistema:")
-    cprint("  reboot  - Reiniciar el computador")
-    cprint("  exit    - Cerrar terminal")
-    cprint("")
-    cprint("Nota: Todo output va a la pantalla externa")
-    cprint("Usa 'wget URL' para descargar programas")
-end
-
--- Función para listar disqueteras
-local function list_disks()
-    clear_screen()
-    cprint("=== Disc Drives ===")
-    local found = 0
-    for _, side in ipairs(DISK_SIDES) do
-        if peripheral.isPresent(side) then
-            local disk = peripheral.wrap(side)
-            local label = disk.getLabel() or "Sin nombre"
-            cprint("  [" .. found .. "] " .. side .. ": " .. label)
-            found = found + 1
-        else
-            cprint("  [" .. found .. "] " .. side .. ": No hay disco")
-            found = found + 1
-        end
+local function move_to_next_line(output_term, width, height)
+    local _, y = output_term.getCursorPos()
+    if y >= height then
+        output_term.scroll(1)
+        output_term.setCursorPos(1, height)
+    else
+        output_term.setCursorPos(1, y + 1)
     end
-    cprint("")
-    cprint("Presiona cualquier tecla para continuar...")
-    -- Esperar tecla - en CC: Tweaked usamos os.pullEvent
-    local event = os.pullEvent("key")
 end
 
--- Función de carga de programa
-local function load_program()
-    list_disks()
-    cprint("Nombre del archivo a cargar: ")
-    local filename = read():gsub("^%s*(.-)%s*$", "%1")
-    if filename == "" then
-        cprint("Nombre de archivo inválido")
-        os.sleep(1)
+local function write_wrapped(text, add_newline)
+    local output_term = term.current()
+    if not output_term then
         return
     end
-    
-    -- Intentar en ambas disqueteras
-    for _, side in ipairs(DISK_SIDES) do
-        if peripheral.isPresent(side) then
-            local disk = peripheral.wrap(side)
-            if disk.exists(filename) then
-                local content = disk.read(filename)
-                -- Ejecutar el programa cargado
-                local func, err = load(content, filename, "t", _G)
-                if func then
-                    setfenv(func, _G)
-                    -- Ejecutar en paralelo para no bloquear
-                    local ok, err2 = pcall(func)
-                    if ok then
-                        cprint("Programa ejecutado desde " .. side)
-                    else
-                        cprint("Error al ejecutar: " .. tostring(err2))
-                    end
+
+    local width, height = output_term.getSize()
+    local function write_line(line)
+        local words = {}
+        for word in line:gmatch("%S+") do
+            words[#words + 1] = word
+        end
+        for index, word in ipairs(words) do
+            local x, y = output_term.getCursorPos()
+            if y > height then
+                output_term.scroll(y - height)
+                output_term.setCursorPos(x, height)
+                x = select(1, output_term.getCursorPos())
+            end
+
+            if x > 1 and x + #word - 1 > width then
+                move_to_next_line(output_term, width, height)
+                x = 1
+            end
+            output_term.write(word)
+
+            local next_word = words[index + 1]
+            if next_word then
+                x = select(1, output_term.getCursorPos())
+                if x + #next_word > width then
+                    move_to_next_line(output_term, width, height)
                 else
-                    cprint("Error al cargar: " .. tostring(err))
+                    output_term.write(" ")
                 end
+            end
+        end
+    end
+
+    text = tostring(text or ""):gsub("\r", "")
+    local start = 1
+    while true do
+        local newline = text:find("\n", start, true)
+        write_line(newline and text:sub(start, newline - 1) or text:sub(start))
+        if not newline then
+            break
+        end
+        move_to_next_line(output_term, width, height)
+        start = newline + 1
+    end
+
+    if add_newline then
+        move_to_next_line(output_term, width, height)
+    end
+end
+
+_G.print = function(...)
+    local values = {}
+    for index = 1, select("#", ...) do
+        values[index] = tostring(select(index, ...))
+    end
+    write_wrapped(table.concat(values, " "), true)
+end
+
+_G.write = function(value)
+    write_wrapped(tostring(value or ""), false)
+end
+
+local shell_chunk, shell_load_error = loadfile("shell.py")
+if not shell_chunk then
+    error("No se pudo cargar shell.py: " .. tostring(shell_load_error))
+end
+local shell_ok, shell_api = pcall(shell_chunk)
+if not shell_ok then
+    error("No se pudo iniciar shell.py: " .. tostring(shell_api))
+end
+_G.shell = shell_api
+_G.candOS = {
+    monitor = monitor,
+    monitor_side = monitor_side,
+    speaker = speaker
+}
+shell.load_imports()
+
+local function collect_apps()
+    return shell.list_apps()
+end
+
+local function screen_write(x, y, text, foreground, background, max_width)
+    if y < 1 or y > screen_height or x > screen_width then
+        return
+    end
+    text = tostring(text)
+    local available = math.min(max_width or screen_width, screen_width - x + 1)
+    if available <= 0 then
+        return
+    end
+    if #text > available then
+        text = text:sub(1, available)
+        local last_space = text:match(".*()%s")
+        if last_space then
+            text = text:sub(1, last_space - 1)
+        end
+    end
+    monitor.setCursorPos(x, y)
+    monitor.setTextColor(foreground or colors.white)
+    monitor.setBackgroundColor(background or colors.black)
+    monitor.write(text .. string.rep(" ", available - #text))
+end
+
+local function button(x, y, width, label, background)
+    local text = (" " .. label .. " "):sub(1, width)
+    screen_write(x, y, text, colors.white, background or colors.blue, width)
+end
+
+local function layout()
+    local columns = math.max(1, math.min(4, math.floor((screen_width - 2) / 14)))
+    local rows = math.max(1, math.floor((screen_height - 5) / 4))
+    local card_width = math.max(1, math.floor((screen_width - (columns + 1) * 2) / columns))
+    return columns, rows, card_width, columns * rows
+end
+
+local function draw_launcher(apps, page, message)
+    local columns, rows, card_width, page_size = layout()
+    local page_count = math.max(1, math.ceil(#apps / page_size))
+    page = math.max(1, math.min(page, page_count))
+
+    monitor.setBackgroundColor(colors.black)
+    monitor.clear()
+    screen_write(1, 1, " CANDOS | LANZADOR DE APPS ", colors.white, colors.blue)
+    screen_write(1, 2, message or (#apps .. " app(s) disponibles"), colors.lightGray)
+
+    local page_text = " ACTUALIZAR "
+    screen_write(math.max(1, screen_width - #page_text + 1), 2, page_text,
+        colors.white, colors.gray)
+
+    local first = (page - 1) * page_size + 1
+    for index = first, math.min(first + page_size - 1, #apps) do
+        local local_index = index - first
+        local column = local_index % columns
+        local row = math.floor(local_index / columns)
+        local x = 2 + column * (card_width + 2)
+        local y = 4 + row * 4
+        local app = apps[index]
+        local name = app.name:gsub("%.app$", "")
+
+        screen_write(x, y, "", colors.white, colors.lightBlue, card_width)
+        screen_write(x, y + 1, "  > " .. name, colors.white, colors.lightBlue, card_width)
+        screen_write(x, y + 2, "  " .. app.side .. ": " .. app.relative_path,
+            colors.white, colors.blue, card_width)
+    end
+
+    if #apps == 0 then
+        screen_write(2, 5, "No hay archivos .app en los", colors.lightGray)
+        screen_write(2, 6, "discos montados de las lectoras.", colors.lightGray)
+        screen_write(2, 8, "Copia archivos Lua con extension .app", colors.lightGray)
+    end
+
+    local footer_y = screen_height
+    button(2, footer_y, 10, "ANTERIOR", colors.gray)
+    button(math.floor((screen_width - 6) / 2), footer_y, 8, "SALIR", colors.red)
+    button(screen_width - 10, footer_y, 10, "SIGUIENTE", colors.gray)
+    screen_write(math.max(1, math.floor((screen_width - 15) / 2)), screen_height - 1,
+        "Pagina " .. page .. "/" .. page_count, colors.lightGray)
+    return page, page_count, columns, rows, card_width, page_size
+end
+
+local function execute_app(app)
+    if monitor then
+        monitor.setBackgroundColor(colors.black)
+        monitor.setTextColor(colors.white)
+        monitor.clear()
+        monitor.setCursorPos(1, 1)
+    end
+    local ok, runtime_error = shell.start(app.path, {})
+    if monitor then
+        term.redirect(monitor)
+        monitor.setBackgroundColor(colors.black)
+        monitor.setTextColor(colors.white)
+    end
+    if not ok then
+        return false, runtime_error
+    end
+    return true, app.name .. " termino. Toca una app para volver a abrirla."
+end
+
+local function run_graphical_launcher()
+    local apps = collect_apps()
+    local page, page_count = 1, 1
+    local message
+
+    while true do
+        local columns, rows, card_width, page_size
+        page, page_count, columns, rows, card_width, page_size =
+            draw_launcher(apps, page, message)
+        message = nil
+
+        local event, side, x, y = os.pullEvent()
+        if event == "monitor_touch" and side == monitor_side then
+            if y == 2 and x >= screen_width - 11 then
+                apps = collect_apps()
+                page = math.min(page, math.max(1, math.ceil(#apps / page_size)))
+            elseif y == screen_height then
+                if x <= 11 then
+                    page = math.max(1, page - 1)
+                elseif x >= screen_width - 10 then
+                    page = math.min(page_count, page + 1)
+                elseif x >= math.floor((screen_width - 6) / 2)
+                    and x < math.floor((screen_width - 6) / 2) + 8 then
+                    return true
+                end
+            elseif y >= 4 and y < 4 + rows * 4 then
+                local row = math.floor((y - 4) / 4)
+                local column = math.floor((x - 2) / (card_width + 2))
+                local card_x = 2 + column * (card_width + 2)
+                if column >= 0 and column < columns and x >= card_x
+                    and x < card_x + card_width then
+                    local index = (page - 1) * page_size + row * columns + column + 1
+                    local app = apps[index]
+                    if app then
+                        local _, result = execute_app(app)
+                        message = result
+                        apps = collect_apps()
+                        page = math.min(page, math.max(1, math.ceil(#apps / page_size)))
+                    end
+                end
+            end
+        elseif event == "monitor_resize" and side == monitor_side then
+            screen_width, screen_height = monitor.getSize()
+        elseif event == "peripheral_detach" and side == monitor_side then
+            return false
+        end
+    end
+end
+
+local function show_hardware()
+    print("=== Hardware CC: Tweaked ===")
+    if monitor then
+        print("Monitor: " .. screen_width .. "x" .. screen_height .. " caracteres")
+        print("El tamano fisico 5x5 se configura en Minecraft.")
+    else
+        print("Monitor: no detectado; usando pantalla del computador.")
+    end
+
+    for _, side in ipairs({"left", "right"}) do
+        if peripheral.getType(side) == "drive" then
+            local drive = peripheral.wrap(side)
+            local mount = drive.getMountPath()
+            print(side .. ": lectora conectada, " ..
+                (mount and ("disco montado en " .. mount) or "sin disco de datos"))
+        else
+            print(side .. ": lectora no detectada")
+        end
+    end
+    print("Altavoz atras: " .. (speaker and "conectado" or "no detectado"))
+    print("Computador: " .. (os.getComputerLabel() or tostring(os.getComputerID())))
+    print("")
+end
+
+local function run_terminal_launcher()
+    print("CANDOS - Shell del sistema")
+    print("Comandos: apps, launch <numero>, hardware, cc <comando CC>, exit")
+    while true do
+        write(shell.dir() .. "> ")
+        local line = read()
+        local command = line:match("^%s*(%S+)")
+        command = command and command:lower() or ""
+        if command == "exit" then
+            return
+        elseif command == "hardware" or command == "hw" then
+            show_hardware()
+        elseif command == "apps" or command == "list" then
+            local apps = collect_apps()
+            for index, app in ipairs(apps) do
+                print(string.format("%d. %s [%s]", index, app.name, app.side))
+            end
+            if #apps == 0 then
+                print("No hay archivos .app en el path.")
+            end
+        elseif command == "launch" then
+            local selected = tonumber(line:match("^%s*%S+%s+(%S+)"))
+            local apps = collect_apps()
+            local app = selected and apps[selected]
+            if not app then
+                print("Numero de app invalido. Usa 'apps' para ver la lista.")
+            else
+                local _, result = execute_app(app)
+                print(result)
+            end
+        elseif command == "cc" then
+            shell.cc(line:gsub("^%s*%S+%s*", "", 1))
+        elseif command ~= "" then
+            local _, result = shell.run(line)
+            if result == "exit" then
                 return
             end
         end
     end
-    cprint("Archivo no encontrado en ninguna disquetera")
-    os.sleep(1)
 end
 
--- Función de reinicio
-local function system_reboot()
-    cprint("Reiniciando ESPAndOS...")
-    os.sleep(1)
-    -- En CC: Tweaked, reiniciar se hace con os.reboot()
-    os.reboot()
+local keep_monitor_terminal = false
+if monitor then
+    keep_monitor_terminal = run_graphical_launcher()
+else
+    run_terminal_launcher()
 end
 
--- Función principal de eventos
-local function handle_events()
-    while true do
-        local event = os.pullEvent()
-        
-        if event == "key" then
-            local key = param1
-            local char = string.char(key)
-            
-            if key == 28 then -- Enter
-                cprint("\n")
-            elseif key == 14 then -- Backspace
-                local cx, cy = monitor.getCursorPos()
-                if cx > 1 then
-                    monitor.setCursorPos(cx - 1, cy)
-                    monitor.write(" ")
-                    monitor.setCursorPos(cx - 1, cy)
-                end
-            elseif char == "h" or char == "H" then
-                show_help()
-            elseif char == "c" or char == "C" then
-                clear_screen()
-            elseif char == "t" or char == "T" then
-                play_tone()
-            elseif char == "s" or char == "S" then
-                play_scale()
-            elseif char == "d" or char == "D" then
-                list_disks()
-            elseif char == "l" or char == "L" then
-                load_program()
-            elseif char == "r" or char == "R" then
-                system_reboot()
-            elseif char == "e" or char == "E" then
-                cprint("Saliendo...")
-                os.sleep(1)
-                term.redirect(old_term)
-                monitor.clear()
-                monitor.setVisible(false)
-                error("Sistema detenido por usuario")
-            end
-        end
-    end
+if keep_monitor_terminal then
+    term.redirect(monitor)
+else
+    term.redirect(original_terminal)
 end
-
--- Programa principal
-cprint("=== ESPAndOS Bridge Iniciando ===")
-cprint("Redirigiendo terminal a pantalla externa...")
-
--- Mostrar banner inicial
-show_banner()
-
--- Iniciar manejador de eventos en background usando parallel
--- En CC: Tweaked, usamos paralelo
-parallel.waitForAll(handle_events)
+print("CANDOS finalizado; la terminal de CC:Tweaked esta disponible.")
