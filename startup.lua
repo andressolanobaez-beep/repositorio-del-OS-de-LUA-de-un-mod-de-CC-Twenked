@@ -122,7 +122,11 @@ _G.candOS = {
     monitor_side = monitor_side,
     speaker = speaker
 }
-shell.load_imports()
+if type(shell.load_imports) == "function" then
+    shell.load_imports()
+else
+    print("Aviso: shell.py no admite la carga de drivers; actualiza CANDOS.")
+end
 
 local function collect_apps()
     return shell.list_apps()
