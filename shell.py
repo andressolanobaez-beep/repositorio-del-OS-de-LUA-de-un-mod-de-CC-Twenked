@@ -1,9 +1,38 @@
 -- CANDOS shell library. This is Lua source despite its requested .py filename:
 -- CC:Tweaked executes Lua and does not provide a Python runtime.
 
-local native_shell = shell
-local current_dir = fs.combine(native_shell.dir() or "")
-local system_root = current_dir
+local original_shell = shell
+local native_run = type(original_shell) == "table" and original_shell.run or nil
+local system_root
+if fs.exists("/disk2/shell.py") then
+    system_root = fs.combine("disk2")
+elseif type(original_shell) == "table" and type(original_shell.dir) == "function" then
+    system_root = fs.combine(original_shell.dir() or "")
+else
+    system_root = fs.combine("")
+end
+local current_dir = system_root
+local native_shell = original_shell
+
+if type(native_shell) ~= "table" then
+    native_shell = {}
+end
+if type(native_shell.dir) ~= "function" then
+    native_shell.dir = function()
+        return current_dir
+    end
+end
+if type(native_shell.setDir) ~= "function" then
+    native_shell.setDir = function(path)
+        local target = fs.combine(path or "")
+        if not fs.exists(target) or not fs.isDir(target) then
+            return false, "La carpeta no existe: " .. target
+        end
+        current_dir = target
+        return true
+    end
+end
+
 local config_dir = fs.combine(system_root, ".candOS")
 local path_file = fs.combine(config_dir, "path.txt")
 local importing_file = fs.combine(system_root, "importing.txt")
@@ -532,7 +561,10 @@ function api.cc(command_line)
     if #words == 0 then
         return true
     end
-    local ok = native_shell.run(table.unpack(words))
+    if type(native_run) ~= "function" then
+        return print_result(false, "La shell nativa de CC:Tweaked no esta disponible.")
+    end
+    local ok = native_run(table.unpack(words))
     current_dir = fs.combine(native_shell.dir() or current_dir)
     return ok
 end
