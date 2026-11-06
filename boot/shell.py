@@ -4,14 +4,19 @@
 local original_shell = shell
 local native_run = type(original_shell) == "table" and original_shell.run or nil
 local system_root
-if fs.exists("/disk2/shell.py") then
+local modern_layout = fs.exists("/disk2/boot/shell.py")
+if modern_layout then
+    system_root = fs.combine("disk2")
+elseif fs.exists("/disk2/shell.py") then
     system_root = fs.combine("disk2")
 elseif type(original_shell) == "table" and type(original_shell.dir) == "function" then
     system_root = fs.combine(original_shell.dir() or "")
 else
     system_root = fs.combine("")
 end
-local current_dir = system_root
+local files_root = fs.combine(system_root, "files")
+local current_dir = fs.exists(files_root) and fs.isDir(files_root)
+    and files_root or system_root
 local native_shell = original_shell
 
 if type(native_shell) ~= "table" then
@@ -35,7 +40,9 @@ end
 
 local config_dir = fs.combine(system_root, ".candOS")
 local path_file = fs.combine(config_dir, "path.txt")
-local importing_file = fs.combine(system_root, "importing.txt")
+local importing_file = fs.combine(system_root,
+    modern_layout and "boot/importing.txt" or "importing.txt")
+local legacy_importing_file = fs.combine(system_root, "importing.txt")
 local custom_paths = {}
 local api = {}
 
@@ -57,7 +64,19 @@ local function resolve(path)
     path = tostring(path or "")
     path = path:gsub("\\", "/")
     if path:sub(1, 1) == "/" then
-        return fs.combine(system_root, path:sub(2))
+        local relative = path:sub(2)
+        if relative == "" then
+            return system_root
+        end
+        local first = relative:match("^([^/]+)")
+        if first == "apps" or first == "boot" or first == "files"
+            or first == ".candOS" then
+            return fs.combine(system_root, relative)
+        end
+        if modern_layout then
+            return fs.combine(files_root, relative)
+        end
+        return fs.combine(system_root, relative)
     end
     return fs.combine(current_dir, path)
 end
@@ -126,6 +145,7 @@ local function get_path_entries()
     end
 
     add(fs.combine(system_root, "apps"), "computador")
+    add(fs.combine(system_root, "apps/candos"), "compatibilidad")
     for _, path in ipairs(custom_paths) do
         add(path, "computador")
     end
@@ -248,7 +268,14 @@ local function scan_for_name(directory, wanted, results, depth)
     for _, name in ipairs(names) do
         local path = fs.combine(directory, name)
         if fs.isDir(path) then
-            scan_for_name(path, wanted, results, depth + 1)
+            if name:lower():match("%.app$") then
+                if name:lower() == wanted:lower()
+                    and fs.exists(fs.combine(path, "main.app")) then
+                    results[#results + 1] = path
+                end
+            else
+                scan_for_name(path, wanted, results, depth + 1)
+            end
         elseif name:lower() == wanted:lower() then
             results[#results + 1] = path
         end
@@ -258,7 +285,8 @@ end
 local function find_in_paths(name)
     for _, candidate in ipairs(executable_candidates(name)) do
         local direct = resolve(candidate)
-        if fs.exists(direct) and not fs.isDir(direct) then
+        if fs.exists(direct) and (not fs.isDir(direct)
+            or fs.exists(fs.combine(direct, "main.app"))) then
             return direct
         end
         for _, entry in ipairs(get_path_entries()) do
@@ -272,13 +300,19 @@ local function find_in_paths(name)
 end
 
 local function execute_file(path, arguments)
-    local source, read_error = read_file(path)
-    if not source then
-        return false, "No se pudo leer " .. display_path(path) .. ": " .. tostring(read_error)
+    local program_path = path
+    if fs.isDir(program_path) then
+        program_path = fs.combine(program_path, "main.app")
     end
-    local program, syntax_error = load(source, "@" .. display_path(path), "t", _ENV)
+    local source, read_error = read_file(program_path)
+    if not source then
+        return false, "No se pudo leer " .. display_path(program_path) ..
+            ": " .. tostring(read_error)
+    end
+    local program, syntax_error = load(source, "@" .. display_path(program_path), "t", _ENV)
     if not program then
-        return false, "Error de sintaxis en " .. display_path(path) .. ": " .. tostring(syntax_error)
+        return false, "Error de sintaxis en " .. display_path(program_path) ..
+            ": " .. tostring(syntax_error)
     end
     local ok, runtime_error = pcall(program, table.unpack(arguments, 1, #arguments))
     if not ok then
@@ -297,10 +331,14 @@ local function persist_paths()
 end
 
 local function load_imports()
-    if not fs.exists(importing_file) then
+    local import_path = importing_file
+    if not fs.exists(import_path) and fs.exists(legacy_importing_file) then
+        import_path = legacy_importing_file
+    end
+    if not fs.exists(import_path) then
         return true
     end
-    local contents, err = read_file(importing_file)
+    local contents, err = read_file(import_path)
     if not contents then
         print("No se pudo leer importing.txt: " .. tostring(err))
         return false
@@ -378,7 +416,8 @@ end
 local function find_path(name)
     for _, candidate in ipairs(executable_candidates(name)) do
         local direct = resolve(candidate)
-        if fs.exists(direct) and not fs.isDir(direct) then
+        if fs.exists(direct) and (not fs.isDir(direct)
+            or fs.exists(fs.combine(direct, "main.app"))) then
             return direct
         end
         for _, entry in ipairs(get_path_entries()) do
@@ -532,14 +571,37 @@ function api.list_apps()
         for _, name in ipairs(names) do
             local path = fs.combine(directory, name)
             if fs.isDir(path) then
-                scan(entry, path, depth + 1)
+                if name:lower():match("%.app$") then
+                    local main_path = fs.combine(path, "main.app")
+                    local key = name:lower()
+                    if fs.exists(main_path) and not seen[key] then
+                        seen[key] = true
+                        local icon_path = fs.combine(path, "icon.app")
+                        local icon = fs.exists(icon_path) and read_file(icon_path) or ""
+                        local glyph, color = tostring(icon):match("^%s*([^%s]+)%s*([^%s]*)")
+                        apps[#apps + 1] = {
+                            name = name,
+                            path = path,
+                            main_path = main_path,
+                            icon = glyph or "APP",
+                            icon_color = color or "blue",
+                            side = entry.side,
+                            relative_path = display_path(path)
+                        }
+                    end
+                else
+                    scan(entry, path, depth + 1)
+                end
             elseif name:lower():match("%.app$") then
-                local key = path:lower()
+                local key = name:lower()
                 if not seen[key] then
                     seen[key] = true
                     apps[#apps + 1] = {
                         name = name,
                         path = path,
+                        main_path = path,
+                        icon = "APP",
+                        icon_color = "gray",
                         side = entry.side,
                         relative_path = display_path(path)
                     }
@@ -568,7 +630,9 @@ function api.start(path, arguments)
     if not target then
         return false, "No se encontro la aplicacion: " .. path
     end
-    if not target:lower():match("%.app$") and not target:lower():match("%.lua$") then
+    if not target:lower():match("%.app$") and not target:lower():match("%.lua$")
+        and not (fs.isDir(target)
+            and fs.exists(fs.combine(target, "main.app"))) then
         return false, "Solo se pueden ejecutar archivos .app o .lua."
     end
     return execute_file(target, arguments or {})

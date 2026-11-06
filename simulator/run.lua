@@ -83,6 +83,91 @@ local _, key = os.pullEvent("key")
 print("EVENT:" .. tostring(key))
 os.pullEvent("key")
 ]]
+local icon_fixtures = {
+    ["adivina.app"] = "? yellow",
+    ["ajustes.app"] = "CFG lightBlue",
+    ["archivador.app"] = "FS cyan",
+    ["bloc.app"] = "TXT orange",
+    ["calculadora.app"] = "CAL lime",
+    ["calendario.app"] = "DAY pink",
+    ["candos_fps.app"] = "FPS red",
+    ["carrera.app"] = "RUN green",
+    ["convertidor.app"] = "CON orange",
+    ["dados.app"] = "D6 white",
+    ["dispositivos.app"] = "DEV cyan",
+    ["hardware.app"] = "HW gray",
+    ["hola.app"] = "HI lime",
+    ["matematicas.app"] = "M+ magenta",
+    ["mayor_menor.app"] = "<> yellow",
+    ["memoria.app"] = "MEM purple",
+    ["moneda.app"] = "COIN yellow",
+    ["notas.app"] = "NOTE orange",
+    ["palabra.app"] = "ABC lightBlue",
+    ["pong.app"] = "PONG blue",
+    ["ppt.app"] = "PPT red",
+    ["quiz.app"] = "Q yellow",
+    ["red.app"] = "NET red",
+    ["reflejos.app"] = "FAST green",
+    ["reloj.app"] = "CLK white",
+    ["simon.app"] = "SIMON yellow",
+    ["tareas.app"] = "TASK lightBlue",
+    ["temporizador.app"] = "TMR green",
+    ["terminal.app"] = "CLI gray",
+    ["tres_en_raya.app"] = "XO magenta"
+}
+local basalt_source = [[
+local frames = {}
+local function make_control(frame)
+    local control = {}
+    frame.controls[#frame.controls + 1] = control
+    for _, method in ipairs({
+        "setPosition", "setSize", "setText", "setForeground",
+        "setBackground", "setBorder"
+    }) do
+        control[method] = function(self, ...)
+            self[method .. "_args"] = {...}
+            if method == "setBorder" then
+                basalt_border_count = basalt_border_count + 1
+            end
+            return self
+        end
+    end
+    function control:onClick(callback)
+        self.callback = callback
+        return self
+    end
+    return control
+end
+local api = {}
+function api.createFrame(name)
+    local frame = {controls = {}}
+    function frame:setBackground() return self end
+    function frame:addLabel() return make_control(self) end
+    function frame:addButton() return make_control(self) end
+    frames[name] = frame
+    return frame
+end
+function api.removeFrame(name)
+    frames[name] = nil
+end
+function api.update(event, side, x, y)
+    if event ~= "monitor_touch" then return end
+    for _, frame in pairs(frames) do
+        for _, control in ipairs(frame.controls) do
+            local position = control.setPosition_args
+            local size = control.setSize_args
+            if position and size and x >= position[1] and x < position[1] + size[1]
+                and y >= position[2] and y < position[2] + size[2]
+                and control.callback then
+                basalt_click_count = basalt_click_count + 1
+                control.callback()
+                return
+            end
+        end
+    end
+end
+return api
+]]
 local calculator_left, calculator_operator, calculator_right =
     ("-12.5 / 2"):match("^%s*(%-?[%d%.]+)%s*([%+%-%*/])%s*(%-?[%d%.]+)%s*$")
 check(tonumber(calculator_left) == -12.5 and calculator_operator == "/"
@@ -90,25 +175,27 @@ check(tonumber(calculator_left) == -12.5 and calculator_operator == "/"
     "La expresion de calculadora no reconoce negativos, decimales y operadores")
 
 local system_files = {
-    ["buzzer.lua"] = true,
-    ["disk_manager.lua"] = true,
-    ["hello.lua"] = true,
-    ["importing.txt"] = true,
-    ["shell.py"] = true,
-    ["startup.lua"] = true,
-    ["utils.lua"] = true
+    ["boot/buzzer.lua"] = true,
+    ["boot/disk_manager.lua"] = true,
+    ["boot/importing.txt"] = true,
+    ["boot/shell.py"] = true,
+    ["boot/startup.lua"] = true,
+    ["boot/utils.lua"] = true,
+    ["boot/lib/basalt.lua"] = true
 }
 
 local function host_exists(path)
     path = host_path(path)
-    if path == "apps/test_input.app" then
+    if path == "apps/test_input.app/main.app"
+        or path == "apps/test_input.app/icon.app" then
         return true
     end
     if system_files[path] then
         return true
     end
     for _, name in ipairs(app_names) do
-        if path == "apps/" .. name then
+        if path == "apps/" .. name .. "/main.app"
+            or path == "apps/" .. name .. "/icon.app" then
             return true
         end
     end
@@ -120,9 +207,18 @@ local function host_is_dir(path)
     return path == ""
         or path == "disk2"
         or path == "disk2/apps"
+        or path == "disk2/files"
+        or path == "disk2/boot"
+        or path == "disk2/boot/lib"
+        or path == "disk2/boot/licenses"
         or path == "disk2/.candOS"
         or path == "."
         or path == "apps"
+        or path == "boot"
+        or path == "boot/lib"
+        or path == "apps/test_input.app"
+        or path:match("^apps/[^/]+%.app$")
+        or path:match("^disk2/apps/[^/]+%.app$")
         or path == "storageA"
         or path == "storageB"
         or path == "storage20k"
@@ -145,8 +241,12 @@ fs = {
             result[#result + 1] = "test_input.app"
             return result
         end
-        if path == "disk2/.candOS" then
+        if path == "disk2/.candOS" or path == "disk2/boot/lib"
+            or path == "disk2/boot/licenses" or path == "disk2/files" then
             return {}
+        end
+        if path:match("^disk2/apps/[^/]+%.app$") or path:match("^apps/[^/]+%.app$") then
+            return {"icon.app", "main.app"}
         end
         if path == "storageA" or path == "storageB" or path == "storage20k" then
             return {}
@@ -162,11 +262,16 @@ fs = {
     open = function(path, mode)
         path = normalize(path)
         if mode == "r" and host_exists(path) then
-            local contents = path == "disk2/importing.txt"
+            local contents = path == "disk2/boot/importing.txt"
                 and "# Simulator fixture: no startup imports.\n"
                 or ""
-            if path == "disk2/apps/test_input.app" then
+            if path == "disk2/apps/test_input.app/main.app" then
                 contents = test_input_source
+            elseif path:match("^disk2/apps/[^/]+%.app/icon%.app$") then
+                local package = path:match("^disk2/apps/([^/]+%.app)/icon%.app$")
+                contents = icon_fixtures[package] or "APP blue"
+            elseif path == "disk2/boot/lib/basalt.lua" then
+                contents = basalt_source
             end
             local closed = false
             return {
@@ -297,10 +402,19 @@ colors = {
     black = 1,
     white = 2,
     blue = 4,
-    lightBlue = 8,
-    gray = 16,
-    lightGray = 32,
-    red = 64
+    orange = 8,
+    magenta = 16,
+    lightBlue = 32,
+    yellow = 64,
+    lime = 128,
+    pink = 256,
+    gray = 512,
+    lightGray = 1024,
+    cyan = 2048,
+    purple = 4096,
+    brown = 8192,
+    green = 16384,
+    red = 32768
 }
 
 peripheral = {
@@ -385,24 +499,25 @@ os.getComputerID = function()
 end
 
 local saved_print = print
+basalt_border_count = 0
+basalt_click_count = 0
 printError = function(message)
     saved_print("CANDOS ERROR: " .. tostring(message))
 end
 
-local startup, load_error = native_loadfile("startup.lua")
+local startup, load_error = native_loadfile("boot/startup.lua")
 check(startup ~= nil, "No se pudo cargar startup.lua: " .. tostring(load_error))
 
 local lua_files = {
-    "buzzer.lua",
-    "disk_manager.lua",
-    "hello.lua",
+    "boot/buzzer.lua",
+    "boot/disk_manager.lua",
     "installer.lua",
-    "shell.py",
-    "startup.lua",
-    "utils.lua"
+    "boot/shell.py",
+    "boot/startup.lua",
+    "boot/utils.lua"
 }
 for _, app_name in ipairs(app_names) do
-    lua_files[#lua_files + 1] = "apps/" .. app_name
+    lua_files[#lua_files + 1] = "apps/" .. app_name .. "/main.app"
 end
 local test_input_chunk, test_input_error =
 load(test_input_source, "@test_input.app", "t", _ENV)
@@ -425,15 +540,31 @@ check(touch_index == #touch_events, "El lanzador no proceso todos los toques sim
 check(type(shell.load_imports) == "function", "shell.load_imports no fue exportada")
 check(type(shell.list_apps) == "function", "shell.list_apps no fue exportada")
 check(type(shell.start) == "function", "shell.start no fue exportada")
-check(shell.dir() == "/", "La raiz logica de CANDOS no es /")
+check(shell.dir() == "/files", "El directorio inicial no apunta a /files")
 
 local apps = shell.list_apps()
 check(#apps == #app_names + 1, "Se esperaban " .. #app_names ..
     " apps instaladas y una app de prueba; se encontraron " .. #apps)
+local app_packages = 0
+for _, app in ipairs(apps) do
+    check(app.main_path == "disk2/apps/" .. app.name .. "/main.app",
+        "Una app empaquetada no apunta a main.app: " .. app.name)
+    check(type(app.icon) == "string" and app.icon ~= ""
+        and type(app.icon_color) == "string" and app.icon_color ~= "",
+        "No se leyo icon.app para " .. app.name)
+    check(colors[app.icon_color] ~= nil,
+        "icon.app usa un color no disponible: " .. app.icon_color)
+    if app.name ~= "test_input.app" then
+        app_packages = app_packages + 1
+        check(fs.exists("disk2/apps/" .. app.name .. "/icon.app"),
+            "Falta icon.app en " .. app.name)
+    end
+end
+check(app_packages == #app_names, "El simulador no encontro los 30 paquetes .app")
 check(shell.where("terminal") == "disk2/apps/terminal.app",
     "No se encontro la app terminal en disk2/apps")
-check(shell.resolve("/notas.txt") == "disk2/notas.txt",
-    "Las rutas absolutas no se resolvieron desde disk2")
+check(shell.resolve("/notas.txt") == "disk2/files/notas.txt",
+    "Las rutas de usuario no se resolvieron desde /disk2/files")
 local device_list = shell.peripherals()
 check(#device_list == #device_names,
     "No se enumeraron los periféricos fuera de los lados tradicionales")
@@ -489,7 +620,8 @@ touch_index = 0
 monitor_writes = {}
 clear_screen()
 
-local compatible_startup, compatible_load_error = native_loadfile("startup.lua")
+local compatible_startup, compatible_load_error =
+    native_loadfile("boot/startup.lua")
 check(compatible_startup ~= nil,
     "No se pudo cargar startup.lua para la prueba de compatibilidad: " ..
         tostring(compatible_load_error))
@@ -502,8 +634,8 @@ for _, write in ipairs(monitor_writes) do
 end
 check(table.concat(writes):find("no admite la carga de drivers", 1, true) ~= nil,
     "No se aviso cuando shell.py es una version anterior")
-check(table.concat(writes):find(" archivador", 1, true) ~= nil,
-    "La lista de apps de disk2 no se mostro con una shell anterior sin list_apps")
+check(table.concat(writes):find("[APP]", 1, true) ~= nil,
+    "El lanzador no descubrio paquetes .app sin list_apps")
 check(touch_index == #touch_events,
     "El lanzador de compatibilidad no ejecuto y cerro tras los toques simulados")
 
@@ -518,7 +650,7 @@ monitor_writes = {}
 clear_screen()
 
 local no_native_shell_startup, no_native_shell_load_error =
-    native_loadfile("startup.lua")
+    native_loadfile("boot/startup.lua")
 check(no_native_shell_startup ~= nil,
     "No se pudo cargar startup.lua sin shell nativa: " ..
         tostring(no_native_shell_load_error))
@@ -537,28 +669,31 @@ check(type(candOS.graphics.panel) == "function"
 
 shell = nil
 touch_events = {
-    {"monitor_touch", "top", 48, height},
+    {"monitor_touch", "top", 45, height},
     {"monitor_touch", "top", 36, 24},
-    {"monitor_touch", "top", 31, height - 3},
-    {"monitor_touch", "top", 38, height - 4},
-    {"monitor_touch", "top", 48, 1},
+    {"monitor_touch", "top", 49, 1},
     {"monitor_touch", "top", 25, height - 3},
-    {"monitor_touch", "top", 45, height},
-    {"monitor_touch", "top", 43, height - 4},
-    {"monitor_touch", "top", 41, height - 3},
-    {"monitor_touch", "top", 45, height},
-    {"monitor_touch", "top", 18, height - 4},
-    {"monitor_touch", "top", 45, height},
-    {"monitor_touch", "top", 48, 1},
-    {"monitor_touch", "top", 25, height - 3},
+    {"monitor_touch", "top", 8, 48},
+    {"monitor_touch", "top", 8, 48},
+    {"monitor_touch", "top", 4, 42},
+    {"monitor_touch", "top", 29, 39},
+    {"monitor_touch", "top", 37, 36},
+    {"monitor_touch", "top", 46, 42},
+    {"monitor_touch", "top", 37, 36},
+    {"monitor_touch", "top", 35, 48},
+    {"monitor_touch", "top", 42, 36},
+    {"monitor_touch", "top", 40, 39},
+    {"monitor_touch", "top", 35, 48},
+    {"monitor_touch", "top", 17, 39},
+    {"monitor_touch", "top", 35, 48},
     {"key", "x"},
-    {"monitor_touch", "top", 45, 1},
+    {"monitor_touch", "top", 46, 1},
     {"peripheral_detach", "top"}
 }
 touch_index = 0
 monitor_writes = {}
 clear_screen()
-local interactive_startup = assert(native_loadfile("startup.lua"))
+local interactive_startup = assert(native_loadfile("boot/startup.lua"))
 run_until_events_exhausted(interactive_startup,
     "Fallo la prueba de input/minimizar")
 local interactive_output = {}
@@ -569,12 +704,20 @@ local rendered = table.concat(interactive_output)
 local result_position = rendered:find("RESULT:", 1, true)
 local result_text = result_position
     and rendered:sub(result_position, result_position + 30) or "missing"
-check(rendered:find("RESULT:hi:ok", 1, true) ~= nil,
-    "io.read/input perdieron el texto al minimizar y reanudar: " .. result_text)
+local recent_writes = {}
+for index = math.max(1, #interactive_output - 12), #interactive_output do
+    recent_writes[#recent_writes + 1] = interactive_output[index]
+end
+check(rendered:find("RESULT:Hi:ok", 1, true) ~= nil,
+    "io.read/input perdieron el texto al minimizar y reanudar: " .. result_text ..
+        "; eventos procesados=" .. touch_index .. "; recientes=" ..
+        table.concat(recent_writes, "|"))
 check(rendered:find("NUMBER:4", 1, true) ~= nil,
     "io.read('*n') no entrego un valor numerico desde el teclado grafico")
 check(rendered:find("EVENT:x", 1, true) ~= nil,
     "La app no recibio el evento al reanudarse")
+check(basalt_border_count > 0 and basalt_click_count >= 9,
+    "El teclado no creo controles Basalt con borde o no proceso sus clics")
 check(touch_index == #touch_events,
     "La app interactiva no se cerro con el boton X")
 
@@ -582,12 +725,12 @@ monitor_1_only = true
 monitor_writes = {}
 clear_screen()
 local previous_terminal_writes = terminal_write_count
-local missing_monitor_startup = assert(native_loadfile("startup.lua"))
+local missing_monitor_startup = assert(native_loadfile("boot/startup.lua"))
 local missing_monitor_ok, missing_monitor_error =
     xpcall(missing_monitor_startup, debug.traceback)
 check(missing_monitor_ok, "El arranque con solo monitor_1 fallo: " ..
     tostring(missing_monitor_error))
-check(screen[1]:find("CANDOS: falta monitor_0", 1, true) ~= nil,
+check(screen[1]:find("CANDOS: falta monitor principal", 1, true) ~= nil,
     "No se mostro el error en monitor_1 cuando falta monitor_0")
 check(terminal_write_count == previous_terminal_writes,
     "El sistema intento usar la terminal principal de la PC")

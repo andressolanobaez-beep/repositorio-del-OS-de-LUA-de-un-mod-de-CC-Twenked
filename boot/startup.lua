@@ -1,9 +1,10 @@
--- CANDOS: lanzador grafico de aplicaciones Lua para CC: Tweaked.
--- Hardware previsto: monitor grande arriba, lectoras a izquierda/derecha,
--- y speaker atras. Los archivos .app contienen codigo Lua normal.
+-- CANDOS desktop runtime. Network peripherals are discovered by their
+-- peripheral names so no device depends on a fixed computer side.
 
 local monitor, monitor_side
-local display_preference_file = fs.exists("/disk2/shell.py")
+local display_preference_file = fs.exists("/disk2/boot/shell.py")
+    and "/disk2/.candOS/display.txt"
+    or fs.exists("/disk2/shell.py")
     and "/disk2/.candOS/display.txt" or "/.candOS/display.txt"
 
 local function read_display_preference()
@@ -25,20 +26,17 @@ local function find_main_monitor()
         and peripheral.getType(preferred) == "monitor" then
         return peripheral.wrap(preferred), preferred
     end
-    if peripheral.getType("monitor_0") == "monitor" then
-        return peripheral.wrap("monitor_0"), "monitor_0"
-    elseif peripheral.getType("top") == "monitor" then
-        return peripheral.wrap("top"), "top"
-    end
     if type(peripheral.getNames) == "function" then
         for _, name in ipairs(peripheral.getNames()) do
             if name ~= "monitor_1" and peripheral.getType(name) == "monitor" then
                 return peripheral.wrap(name), name
             end
         end
-    end
-    if peripheral.getType("monitor_1") ~= "monitor" then
-        return peripheral.find("monitor")
+    else
+        local fallback, name = peripheral.find("monitor")
+        if fallback and name ~= "monitor_1" then
+            return fallback, name
+        end
     end
 end
 
@@ -57,16 +55,21 @@ if not monitor then
         error_monitor.setTextColor(colors.white)
         error_monitor.clear()
         error_monitor.setCursorPos(1, 1)
-        error_monitor.write("CANDOS: falta monitor_0.")
+        error_monitor.write("CANDOS: falta monitor principal.")
         error_monitor.setCursorPos(1, 2)
-        error_monitor.write("Conecta el monitor principal.")
+        error_monitor.write("Conecta un monitor por cable de red.")
     end
     return
 end
 
 local speaker
-if peripheral.getType("back") == "speaker" then
-    speaker = peripheral.wrap("back")
+if type(peripheral.getNames) == "function" then
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "speaker" then
+            speaker = peripheral.wrap(name)
+            break
+        end
+    end
 else
     speaker = peripheral.find("speaker")
 end
@@ -177,7 +180,8 @@ _G.write = function(value)
     write_wrapped(tostring(value or ""), false)
 end
 
-local shell_path = fs.exists("/disk2/shell.py") and "/disk2/shell.py" or "shell.py"
+local shell_path = fs.exists("/disk2/boot/shell.py") and "/disk2/boot/shell.py"
+    or fs.exists("/disk2/shell.py") and "/disk2/shell.py" or "shell.py"
 local shell_chunk, shell_load_error = loadfile(shell_path)
 if not shell_chunk then
     error("No se pudo cargar " .. shell_path .. ": " .. tostring(shell_load_error))
@@ -198,6 +202,30 @@ else
     print("Aviso: shell.py no admite la carga de drivers; actualiza CANDOS.")
 end
 
+local basalt_path = fs.exists("/disk2/boot/lib/basalt.lua")
+    and "/disk2/boot/lib/basalt.lua" or "boot/lib/basalt.lua"
+local basalt_file, basalt_open_error = fs.open(basalt_path, "r")
+if not basalt_file then
+    error("No se pudo abrir Basalt en " .. basalt_path .. ": " ..
+        tostring(basalt_open_error))
+end
+local basalt_source = basalt_file.readAll()
+basalt_file.close()
+local basalt_chunk, basalt_compile_error = load(basalt_source,
+    "@" .. basalt_path, "t", _ENV)
+if not basalt_chunk then
+    error("Basalt contiene un error de sintaxis: " .. tostring(basalt_compile_error))
+end
+local basalt_ok, basalt_api = pcall(basalt_chunk)
+if not basalt_ok then
+    error("No se pudo iniciar Basalt: " .. tostring(basalt_api))
+end
+if type(basalt_api) ~= "table" or type(basalt_api.createFrame) ~= "function"
+    or type(basalt_api.update) ~= "function" then
+    error("Basalt no expuso createFrame() y update() como requiere CANDOS.")
+end
+_G.candOS.basalt = basalt_api
+
 local function collect_apps()
     if type(shell.list_apps) == "function" then
         return shell.list_apps()
@@ -211,11 +239,25 @@ local function collect_apps()
         for _, name in ipairs(fs.list(directory)) do
             local path = fs.combine(directory, name)
             if fs.isDir(path) then
-                scan(path, depth + 1)
+                if name:lower():match("%.app$")
+                    and fs.exists(fs.combine(path, "main.app")) then
+                    apps[#apps + 1] = {
+                        name = name,
+                        path = path,
+                        main_path = fs.combine(path, "main.app"),
+                        side = "CANDOS",
+                        relative_path = path,
+                        icon = "APP",
+                        icon_color = "blue"
+                    }
+                else
+                    scan(path, depth + 1)
+                end
             elseif name:lower():match("%.app$") then
                 apps[#apps + 1] = {
                     name = name,
                     path = path,
+                    main_path = path,
                     side = "CANDOS",
                     relative_path = path
                 }
@@ -263,6 +305,12 @@ local unpack_values = table.unpack or unpack
 
 local function pack_values(...)
     return {n = select("#", ...), ...}
+end
+
+local function update_basalt(event)
+    if candOS.basalt and event and event.n > 0 then
+        candOS.basalt.update(unpack_values(event, 1, event.n))
+    end
 end
 
 local function app_is_reading()
@@ -363,7 +411,12 @@ os.pullEventRaw = function(filter)
 end
 
 local function button(x, y, width, label, background)
-    local text = (" " .. label .. " "):sub(1, width)
+    local text
+    if width >= 3 then
+        text = ("[" .. tostring(label) .. "]"):sub(1, width)
+    else
+        text = tostring(label):sub(1, width)
+    end
     screen_write(x, y, text, colors.white, background or colors.blue, width)
 end
 
@@ -510,77 +563,63 @@ local function handle_window_control(event, task)
 end
 
 local function keyboard_rows(symbols, numeric)
-    local rows
     if numeric then
-        rows = {
+        return {
             {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
             {"-", ".", "DEL"},
-            {"<-", "HOME", "END", "->"},
-            {"SPACE"},
-            {"CLEAR", "ENTER"}
-        }
-    elseif symbols then
-        rows = {
-            {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
-            {"!", "@", "#", "$", "%", "^", "&", "*", "(", ")"},
-            {"SHIFT", "-", "_", "=", "+", "/", "\\", ".", ",", "DEL"}
-        }
-    else
-        rows = {
-            {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"},
-            {"a", "s", "d", "f", "g", "h", "j", "k", "l"},
-            {"SHIFT", "z", "x", "c", "v", "b", "n", "m", "DEL"}
+            {"<-", "/\\", "\\/", "->", "HOME", "END"},
+            {"CLEAR", "SPACE", "ENTER"}
         }
     end
-    rows[4] = {"<-", "/\\", "\\/", "->", "HOME", "END"}
-    rows[5] = {symbols and "ABC" or "#@/", "SPACE", "ENTER"}
-    return rows
+    if symbols then
+        return {
+            {"1", "2", "3", "4", "5", "6", "7", "8", "9", "0"},
+            {"!", "@", "#", "$", "%", "^", "&", "*", "(", ")"},
+            {"SHIFT", "-", "_", "=", "+", "/", "\\", ".", ",", "DEL"},
+            {"<-", "/\\", "\\/", "->", "HOME", "END"},
+            {"ABC", "SPACE", "ENTER"}
+        }
+    end
+    return {
+        {"q", "w", "e", "r", "t", "y", "u", "i", "o", "p"},
+        {"a", "s", "d", "f", "g", "h", "j", "k", "l"},
+        {"SHIFT", "z", "x", "c", "v", "b", "n", "m", "DEL"},
+        {"<-", "/\\", "\\/", "->", "HOME", "END"},
+        {"#@/", "SPACE", "ENTER"}
+    }
 end
 
-local function draw_input(task)
-    local request = task.pending
-    local state = task.input_state
-    local rows = keyboard_rows(state.symbols, state.numeric)
-    local keyboard_top = math.max(1, screen_height - #rows + 1)
-
-    screen_write(1, 1, " " .. task.app.name:gsub("%.app$", ""),
-        colors.white, colors.blue, math.max(1, screen_width - 6))
-    button(math.max(1, screen_width - 5), 1, 3, "X", colors.red)
-    button(math.max(1, screen_width - 2), 1, 3, "-", colors.gray)
-    screen_write(1, 2, request.prompt ~= "" and request.prompt or "Escribe y pulsa ENTER",
-        colors.white, colors.gray)
-
+local function input_display_text(state, width)
     local display = state.value
-    local visible_width = math.max(1, screen_width - 2)
+    local visible_width = math.max(1, width - 2)
     local start = math.max(1, math.min(state.cursor - visible_width + 1, #display + 1))
     display = display:sub(start, start + visible_width - 1)
     local caret = state.cursor - start + 1
     local before = display:sub(1, caret - 1)
     local after = display:sub(caret)
-    local input_line = (before .. "|" .. after):sub(1, visible_width)
-    screen_write(1, 3, " " .. input_line, colors.black, colors.white, visible_width)
+    return (before .. "|" .. after):sub(1, visible_width)
+end
 
-    for row_index, keys in ipairs(rows) do
-        local y = keyboard_top + row_index - 1
-        local cell_width = math.max(1, math.floor(screen_width / #keys))
-        for key_index, key in ipairs(keys) do
-            local x = math.floor((key_index - 1) * screen_width / #keys) + 1
-            local next_x = math.floor(key_index * screen_width / #keys) + 1
-            local width = math.max(1, next_x - x)
-            local label = key
-            local color = colors.blue
-            if key == "ENTER" then
-                color = colors.green
-            elseif key == "DEL" or key == "SHIFT" or key == "CLEAR" then
-                color = colors.gray
-            elseif key == "SPACE" then
-                label = "ESPACIO"
-                color = colors.lightBlue
-            elseif key == "#@/" or key == "ABC" then
-                color = colors.orange
-            end
-            button(x, y, math.max(cell_width, width), label, color)
-        end
+local function input_button(frame, x, y, width, height, label, background, callback)
+    local control = frame:addButton()
+    control:setPosition(x, y)
+    control:setSize(width, height)
+    control:setText(label)
+    control:setForeground(colors.white)
+    control:setBackground(background)
+    control:setBorder(colors.lightBlue, "top", "bottom", "left", "right")
+    control:onClick(function()
+        callback()
+    end)
+    return control
+end
+
+local function remove_input_frame(task)
+    local state = task.input_state
+    if state and state.frame_name then
+        candOS.basalt.removeFrame(state.frame_name)
+        state.frame_name = nil
+        state.value_control = nil
     end
 end
 
@@ -590,29 +629,9 @@ local function insert_at_cursor(state, text)
     state.cursor = state.cursor + #text
 end
 
-local function handle_keyboard_touch(task, event)
-    if event[1] ~= "monitor_touch"
-        or (event[2] ~= monitor_side and event[2] ~= task.touch_side) then
-        return false, nil
-    end
-    local x, y = event[3], event[4]
-    local control = handle_window_control(event, task)
-    if control then
-        return true, control
-    end
-
-    local rows = keyboard_rows(task.input_state.symbols, task.input_state.numeric)
-    local first_y = math.max(1, screen_height - #rows + 1)
-    local row_index = y - first_y + 1
-    local keys = rows[row_index]
-    if not keys or x < 1 or x > screen_width then
-        return false, nil
-    end
-    local key_index = math.min(#keys, math.floor((x - 1) * #keys / screen_width) + 1)
-    local key = keys[key_index]
-    local state = task.input_state
+local function apply_keyboard_key(state, key)
     if key == "ENTER" then
-        return true, "submit"
+        state.action = "submit"
     elseif key == "CLEAR" then
         state.value = ""
         state.cursor = 1
@@ -640,7 +659,103 @@ local function handle_keyboard_touch(task, event)
         insert_at_cursor(state, state.shift and key:upper() or key)
         state.shift = false
     end
-    return true, nil
+end
+
+local function draw_input(task)
+    local request = task.pending
+    local state = task.input_state
+    if state.frame_name then
+        if state.value_control then
+            state.value_control:setText(input_display_text(state, screen_width - 4))
+        end
+        return
+    end
+
+    local rows = keyboard_rows(state.symbols, state.numeric)
+    if state.shift then
+        for _, row in ipairs(rows) do
+            for index, key in ipairs(row) do
+                if key:match("^[a-z]$") then
+                    row[index] = key:upper()
+                end
+            end
+        end
+    end
+    local key_height = math.max(1, math.min(3,
+        math.floor(math.max(1, screen_height - 5) / #rows)))
+    local keyboard_top = screen_height - #rows * key_height + 1
+    local frame_name = "candOS_input_" ..
+        tostring(task.app.path):gsub("[^%w_]", "_") .. "_" .. tostring(os.clock())
+    local frame = candOS.basalt.createFrame(frame_name)
+    frame:setBackground(colors.black)
+    state.frame_name = frame_name
+
+    local title = frame:addLabel()
+    title:setPosition(1, 1)
+    title:setSize(math.max(1, screen_width - 6), 1)
+    title:setText(" " .. task.app.name:gsub("%.app$", ""))
+    title:setForeground(colors.white)
+    title:setBackground(colors.blue)
+    input_button(frame, math.max(1, screen_width - 5), 1, 3, 1,
+        "X", colors.red, function()
+            state.action = "close"
+        end)
+    input_button(frame, math.max(1, screen_width - 2), 1, 3, 1,
+        "-", colors.gray, function()
+            state.action = "minimize"
+        end)
+
+    local prompt = frame:addLabel()
+    prompt:setPosition(2, 2)
+    prompt:setSize(math.max(1, screen_width - 2), 1)
+    prompt:setText(request.prompt ~= "" and request.prompt or "Escribe y pulsa ENTER")
+    prompt:setForeground(colors.white)
+    prompt:setBackground(colors.gray)
+
+    local value = frame:addLabel()
+    value:setPosition(2, 3)
+    value:setSize(math.max(1, screen_width - 4), 3)
+    value:setText(input_display_text(state, screen_width - 4))
+    value:setForeground(colors.black)
+    value:setBackground(colors.white)
+    value:setBorder(colors.cyan, "top", "bottom", "left", "right")
+    state.value_control = value
+
+    for row_index, keys in ipairs(rows) do
+        local y = keyboard_top + (row_index - 1) * key_height
+        for key_index, key in ipairs(keys) do
+            local x = math.floor((key_index - 1) * screen_width / #keys) + 1
+            local next_x = math.floor(key_index * screen_width / #keys) + 1
+            local width = math.max(1, next_x - x - 1)
+            local label = key == "SPACE" and "ESPACIO"
+                or key == "SHIFT" and "SHIFT"
+                or key == "/\\" and "ARRIBA"
+                or key == "\\/" and "ABAJO"
+                or key
+            local color = colors.blue
+            if key == "ENTER" then
+                color = colors.green
+            elseif key == "DEL" or key == "SHIFT" or key == "CLEAR" then
+                color = colors.gray
+            elseif key == "SPACE" then
+                label = "ESPACIO"
+                color = colors.lightBlue
+            elseif key == "#@/" or key == "ABC" then
+                color = colors.orange
+            end
+            input_button(frame, x, y, width, key_height, label, color, function()
+                local shifted = state.shift
+                apply_keyboard_key(state, key)
+                if key == "#@/" or key == "ABC" or key == "SHIFT"
+                    or shifted and #key == 1 then
+                    remove_input_frame(task)
+                elseif state.value_control then
+                    state.value_control:setText(
+                        input_display_text(state, screen_width - 4))
+                end
+            end)
+        end
+    end
 end
 
 local function matches_filter(request, event)
@@ -706,13 +821,15 @@ local function launch_app_thread(app)
             end
             return
         end
-        local file, open_error = fs.open(app.path, "r")
+        local program_path = app.main_path or app.path
+        local file, open_error = fs.open(program_path, "r")
         if not file then
-            error("No se pudo abrir " .. app.path .. ": " .. tostring(open_error), 0)
+            error("No se pudo abrir " .. program_path .. ": " ..
+                tostring(open_error), 0)
         end
         local source = file.readAll()
         file.close()
-        local program, syntax_error = load(source, "@" .. app.path, "t", _ENV)
+        local program, syntax_error = load(source, "@" .. program_path, "t", _ENV)
         if not program then
             error("Error de sintaxis en " .. app.path .. ": " .. tostring(syntax_error), 0)
         end
@@ -771,18 +888,25 @@ local function resume_task(task, ...)
                 if event[1] == "peripheral" or event[1] == "peripheral_detach"
                     or event[1] == "monitor_resize" then
                     refresh_main_monitor()
+                    remove_input_frame(task)
                 elseif event[1] == "monitor_touch" and event[2] == monitor_side then
                     event[2] = task.touch_side or monitor_side
                 end
-                local handled, action = handle_keyboard_touch(task, event)
-                if handled and action == "close" then
+                update_basalt(event)
+                local state = task.input_state
+                local action = state.action
+                state.action = nil
+                if action == "close" then
+                    remove_input_frame(task)
                     remove_task(task)
                     return true, task.app.name .. " cerrada."
-                elseif handled and action == "minimize" then
+                elseif action == "minimize" then
+                    remove_input_frame(task)
                     task.status = "minimized"
                     return true, task.app.name ..
                         " pausada; toca su boton inferior para reanudar."
-                elseif handled and action == "submit" then
+                elseif action == "submit" then
+                    remove_input_frame(task)
                     local value = task.input_state.value
                     task.pending = nil
                     task.input_state = nil
@@ -802,6 +926,7 @@ local function resume_task(task, ...)
                 elseif event[1] == "monitor_touch" and event[2] == monitor_side then
                     event[2] = task.touch_side or monitor_side
                 end
+                update_basalt(event)
                 local action = handle_window_control(event, task)
                 if action == "close" then
                     remove_task(task)
@@ -877,8 +1002,12 @@ local function draw_launcher(apps, page, message)
         local app = apps[index]
         local name = app.name:gsub("%.app$", "")
         graphics.panel(x, y, card_width, 5, nil, colors.lightGray, colors.gray)
-        screen_write(x + 1, y + 1, " " .. name, colors.white,
-            index % 2 == 0 and colors.blue or colors.lightBlue, card_width - 2)
+        local icon_color = colors[app.icon_color or "blue"] or colors.blue
+        screen_write(x + 1, y + 1, "[" .. tostring(app.icon or "APP") .. "]",
+            colors.white, icon_color, math.min(5, card_width - 2))
+        screen_write(x + 6, y + 1, " " .. name, colors.white,
+            index % 2 == 0 and colors.blue or colors.lightBlue,
+            math.max(1, card_width - 7))
         screen_write(x + 1, y + 2, "Abrir aplicacion", colors.lightGray,
             colors.gray, card_width - 2)
     end
@@ -937,6 +1066,7 @@ local function run_graphical_launcher()
 
         local taskbar = draw_taskbar()
         local event, side, x, y = native_pull_event_raw()
+        update_basalt(pack_values(event, side, x, y))
         if event == "monitor_touch" and side == monitor_side then
             if y == 1 and x >= screen_width - 11 then
                 apps = collect_apps()

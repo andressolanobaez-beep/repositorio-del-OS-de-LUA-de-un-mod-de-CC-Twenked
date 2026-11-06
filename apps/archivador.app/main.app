@@ -1,7 +1,7 @@
 local graphics = candOS.graphics
 local monitor = candOS.monitor
 local width, height = monitor.getSize()
-local directory = shell.resolve("/")
+local directory = shell.resolve("/files")
 local items = {}
 local page = 1
 local selected
@@ -239,12 +239,12 @@ while true do
         if event == "monitor_touch" and side == candOS.monitor_side then
             if y == 4 then
                 if x < 2 + third then
-                    directory = directory == shell.resolve("/") and directory
+                    directory = directory == shell.resolve("/files") and directory
                         or fs.getDir(directory)
                     page = 1
                     refresh()
                 elseif x < 2 + third * 2 then
-                    directory = shell.resolve("/")
+                    directory = shell.resolve("/files")
                     page = 1
                     refresh()
                 elseif x < 2 + third * 3 then
