@@ -1,5 +1,5 @@
 local REPOSITORY = "andressolanobaez-beep/repositorio-del-OS-de-LUA-de-un-mod-de-CC-Twenked"
-local REVISION = "d1df505657492b8f5916f68f7b66c5c57db70e1a"
+local REVISION = "60b9cb25b441b3b6f8e793853cdd3484a28b862d"
 local RAW_BASE = "https://raw.githubusercontent.com/" .. REPOSITORY .. "/" .. REVISION .. "/"
 local BASALT_REVISION = "14c0630c1e110c5b507534e19e6c9607ba10df3e"
 local BASALT_BASE = "https://raw.githubusercontent.com/Pyroxenium/Basalt/" ..
