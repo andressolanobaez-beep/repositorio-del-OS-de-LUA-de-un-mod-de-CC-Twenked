@@ -41,16 +41,35 @@ local function host_path(path)
 end
 
 local app_names = {
+    "ajustes.app",
     "archivador.app",
     "adivina.app",
     "bloc.app",
+    "calendario.app",
     "calculadora.app",
+    "carrera.app",
+    "convertidor.app",
+    "dados.app",
+    "dispositivos.app",
     "hardware.app",
     "hola.app",
+    "candos_fps.app",
+    "matematicas.app",
+    "mayor_menor.app",
+    "memoria.app",
+    "moneda.app",
     "notas.app",
+    "palabra.app",
+    "pong.app",
+    "ppt.app",
+    "quiz.app",
+    "red.app",
+    "reflejos.app",
     "reloj.app",
     "terminal.app",
-    "test_input.app",
+    "simon.app",
+    "tareas.app",
+    "temporizador.app",
     "tres_en_raya.app"
 }
 
@@ -82,6 +101,9 @@ local system_files = {
 
 local function host_exists(path)
     path = host_path(path)
+    if path == "apps/test_input.app" then
+        return true
+    end
     if system_files[path] then
         return true
     end
@@ -101,6 +123,9 @@ local function host_is_dir(path)
         or path == "disk2/.candOS"
         or path == "."
         or path == "apps"
+        or path == "storageA"
+        or path == "storageB"
+        or path == "storage20k"
 end
 
 fs = {
@@ -117,9 +142,13 @@ fs = {
             for index, name in ipairs(app_names) do
                 result[index] = name
             end
+            result[#result + 1] = "test_input.app"
             return result
         end
         if path == "disk2/.candOS" then
+            return {}
+        end
+        if path == "storageA" or path == "storageB" or path == "storage20k" then
             return {}
         end
         error("El simulador no permite listar: /" .. path)
@@ -174,6 +203,13 @@ local screen = {}
 local monitor_writes = {}
 local monitor_1_only = false
 local terminal_write_count = 0
+local device_names = {"top", "drive_left", "drive_extra", "drive_20000",
+    "monitor_1", "printer_1", "modem_1"}
+local drive_mounts = {
+    drive_left = "storageA",
+    drive_extra = "storageB",
+    drive_20000 = "storage20k"
+}
 local function clear_screen()
     screen = {}
     for row = 1, height do
@@ -272,13 +308,28 @@ peripheral = {
         if monitor_1_only then
             return name == "monitor_1" and "monitor" or nil
         end
-        return name == "top" and "monitor" or nil
+        if name == "top" or name == "monitor_1" then
+            return "monitor"
+        end
+        if name == "printer_1" then return "printer" end
+        if name == "modem_1" then return "modem" end
+        return drive_mounts[name] and "drive" or nil
     end,
     wrap = function(name)
         if monitor_1_only then
             return name == "monitor_1" and monitor or nil
         end
-        return name == "top" and monitor or nil
+        if name == "top" or name == "monitor_1" then
+            return monitor
+        end
+        if name == "printer_1" then return {} end
+        if name == "modem_1" then return {} end
+        if drive_mounts[name] then
+            return {getMountPath = function()
+                return drive_mounts[name]
+            end}
+        end
+        return nil
     end,
     find = function(kind)
         if kind == "monitor" and not monitor_1_only then
@@ -287,7 +338,7 @@ peripheral = {
         return nil
     end,
     getNames = function()
-        return {"top"}
+        return device_names
     end
 }
 
@@ -315,10 +366,14 @@ local touch_events = {
     {"peripheral_detach", "top"}
 }
 local touch_index = 0
+local SIMULATOR_END = "SIMULATOR_EVENT_QUEUE_EXHAUSTED"
 os.pullEvent = function()
     touch_index = touch_index + 1
     local event = touch_events[touch_index]
-    check(event ~= nil, "CANDOS solicito mas eventos de los esperados")
+    if not event then
+        touch_index = touch_index - 1
+        error(SIMULATOR_END, 0)
+    end
     return table.unpack(event)
 end
 os.pullEventRaw = os.pullEvent
@@ -347,22 +402,25 @@ local lua_files = {
     "utils.lua"
 }
 for _, app_name in ipairs(app_names) do
-    if app_name ~= "test_input.app" then
-        lua_files[#lua_files + 1] = "apps/" .. app_name
-    else
-        local chunk, syntax_error = load(test_input_source, "@test_input.app", "t", _ENV)
-        check(chunk ~= nil, "Error de sintaxis en la app de prueba: " ..
-            tostring(syntax_error))
-    end
+    lua_files[#lua_files + 1] = "apps/" .. app_name
 end
+local test_input_chunk, test_input_error =
+load(test_input_source, "@test_input.app", "t", _ENV)
+check(test_input_chunk ~= nil, "Error de sintaxis en la app de prueba: " ..
+tostring(test_input_error))
 for _, path in ipairs(lua_files) do
     local chunk, syntax_error = native_loadfile(path)
     check(chunk ~= nil, "Error de sintaxis en " .. path .. ": " ..
         tostring(syntax_error))
 end
 
-local ok, startup_error = xpcall(startup, debug.traceback)
-check(ok, "Fallo al arrancar: " .. tostring(startup_error))
+local function run_until_events_exhausted(entry, message)
+    local ok, runtime_error = xpcall(entry, debug.traceback)
+    check(not ok and tostring(runtime_error):find(SIMULATOR_END, 1, true),
+        message .. ": " .. tostring(runtime_error))
+end
+
+run_until_events_exhausted(startup, "Fallo al arrancar")
 check(touch_index == #touch_events, "El lanzador no proceso todos los toques simulados")
 check(type(shell.load_imports) == "function", "shell.load_imports no fue exportada")
 check(type(shell.list_apps) == "function", "shell.list_apps no fue exportada")
@@ -370,12 +428,28 @@ check(type(shell.start) == "function", "shell.start no fue exportada")
 check(shell.dir() == "/", "La raiz logica de CANDOS no es /")
 
 local apps = shell.list_apps()
-check(#apps == #app_names, "Se esperaban " .. #app_names ..
-    " apps; se encontraron " .. #apps)
+check(#apps == #app_names + 1, "Se esperaban " .. #app_names ..
+    " apps instaladas y una app de prueba; se encontraron " .. #apps)
 check(shell.where("terminal") == "disk2/apps/terminal.app",
     "No se encontro la app terminal en disk2/apps")
 check(shell.resolve("/notas.txt") == "disk2/notas.txt",
     "Las rutas absolutas no se resolvieron desde disk2")
+local device_list = shell.peripherals()
+check(#device_list == #device_names,
+    "No se enumeraron los periféricos fuera de los lados tradicionales")
+local device_types = {}
+for _, device in ipairs(device_list) do
+    device_types[device.type] = true
+end
+check(device_types.printer and device_types.modem and device_types.monitor,
+    "No se detectaron pantallas, impresoras y modems")
+local paths = shell.path_entries()
+local mounted = {}
+for _, entry in ipairs(paths) do
+    mounted[entry.path] = true
+end
+check(mounted.storageA and mounted.storageB and mounted.storage20k,
+    "No se detectaron todas las unidades conectadas")
 
 local launcher_visible = false
 for _, write in ipairs(monitor_writes) do
@@ -419,9 +493,8 @@ local compatible_startup, compatible_load_error = native_loadfile("startup.lua")
 check(compatible_startup ~= nil,
     "No se pudo cargar startup.lua para la prueba de compatibilidad: " ..
         tostring(compatible_load_error))
-local compatible_ok, compatible_error = xpcall(compatible_startup, debug.traceback)
-check(compatible_ok,
-    "El arranque no tolero una shell anterior: " .. tostring(compatible_error))
+run_until_events_exhausted(compatible_startup,
+    "El arranque no tolero una shell anterior")
 
 local writes = {}
 for _, write in ipairs(monitor_writes) do
@@ -449,10 +522,8 @@ local no_native_shell_startup, no_native_shell_load_error =
 check(no_native_shell_startup ~= nil,
     "No se pudo cargar startup.lua sin shell nativa: " ..
         tostring(no_native_shell_load_error))
-local no_native_shell_ok, no_native_shell_error =
-    xpcall(no_native_shell_startup, debug.traceback)
-check(no_native_shell_ok,
-    "El arranque necesita una shell nativa: " .. tostring(no_native_shell_error))
+run_until_events_exhausted(no_native_shell_startup,
+    "El arranque necesita una shell nativa")
 check(type(shell.load_imports) == "function",
     "Falta load_imports cuando no hay shell nativa")
 local graphics_width, graphics_height = candOS.graphics.getSize()
@@ -466,7 +537,8 @@ check(type(candOS.graphics.panel) == "function"
 
 shell = nil
 touch_events = {
-    {"monitor_touch", "top", 5, 24},
+    {"monitor_touch", "top", 48, height},
+    {"monitor_touch", "top", 36, 24},
     {"monitor_touch", "top", 31, height - 3},
     {"monitor_touch", "top", 38, height - 4},
     {"monitor_touch", "top", 48, 1},
@@ -487,10 +559,8 @@ touch_index = 0
 monitor_writes = {}
 clear_screen()
 local interactive_startup = assert(native_loadfile("startup.lua"))
-local interactive_ok, interactive_error =
-    xpcall(interactive_startup, debug.traceback)
-check(interactive_ok, "Fallo la prueba de input/minimizar: " ..
-    tostring(interactive_error))
+run_until_events_exhausted(interactive_startup,
+    "Fallo la prueba de input/minimizar")
 local interactive_output = {}
 for _, write in ipairs(monitor_writes) do
     interactive_output[#interactive_output + 1] = write.text
@@ -525,5 +595,5 @@ check(terminal_write_count == previous_terminal_writes,
 io.write(string.format(
     "PASS: %d archivos Lua validos; %d apps; arranque grafico sin terminal principal; input grafico, pausa y cierre comprobados.\n",
     #lua_files,
-    #apps
+    #app_names
 ))

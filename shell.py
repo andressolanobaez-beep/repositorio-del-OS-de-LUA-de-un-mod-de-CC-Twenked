@@ -129,16 +129,44 @@ local function get_path_entries()
     for _, path in ipairs(custom_paths) do
         add(path, "computador")
     end
-    for _, side in ipairs({"left", "right"}) do
-        if peripheral.getType(side) == "drive" then
-            local drive = peripheral.wrap(side)
-            local mount = drive.getMountPath()
-            if mount then
-                add(mount, side)
+    local names = type(peripheral.getNames) == "function"
+        and peripheral.getNames() or {"left", "right"}
+    for _, name in ipairs(names) do
+        if peripheral.getType(name) == "drive" then
+            local drive = peripheral.wrap(name)
+            if drive and type(drive.getMountPath) == "function" then
+                local mount = drive.getMountPath()
+                if mount then
+                    add(mount, name)
+                end
             end
         end
     end
     return entries
+end
+
+local function connected_peripherals()
+    local devices = {}
+    if type(peripheral.getNames) ~= "function" then
+        for _, name in ipairs({"left", "right", "top", "bottom", "front", "back"}) do
+            local kind = peripheral.getType(name)
+            if kind then
+                devices[#devices + 1] = {name = name, type = kind}
+            end
+        end
+        return devices
+    end
+
+    for _, name in ipairs(peripheral.getNames()) do
+        local kind = peripheral.getType(name)
+        if kind then
+            devices[#devices + 1] = {name = name, type = kind}
+        end
+    end
+    table.sort(devices, function(a, b)
+        return a.name:lower() < b.name:lower()
+    end)
+    return devices
 end
 
 local function path_string()
@@ -487,6 +515,10 @@ end
 
 function api.path_entries()
     return get_path_entries()
+end
+
+function api.peripherals()
+    return connected_peripherals()
 end
 
 function api.list_apps()

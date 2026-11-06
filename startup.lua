@@ -3,15 +3,46 @@
 -- y speaker atras. Los archivos .app contienen codigo Lua normal.
 
 local monitor, monitor_side
-if peripheral.getType("monitor_0") == "monitor" then
-    monitor = peripheral.wrap("monitor_0")
-    monitor_side = "monitor_0"
-elseif peripheral.getType("top") == "monitor" then
-    monitor = peripheral.wrap("top")
-    monitor_side = "top"
-elseif peripheral.getType("monitor_1") ~= "monitor" then
-    monitor, monitor_side = peripheral.find("monitor")
+local display_preference_file = fs.exists("/disk2/shell.py")
+    and "/disk2/.candOS/display.txt" or "/.candOS/display.txt"
+
+local function read_display_preference()
+    if not fs.exists(display_preference_file) then
+        return nil
+    end
+    local file = fs.open(display_preference_file, "r")
+    if not file then
+        return nil
+    end
+    local name = file.readAll():gsub("^%s*(.-)%s*$", "%1")
+    file.close()
+    return name ~= "" and name or nil
 end
+
+local function find_main_monitor()
+    local preferred = read_display_preference()
+    if preferred and preferred ~= "monitor_1"
+        and peripheral.getType(preferred) == "monitor" then
+        return peripheral.wrap(preferred), preferred
+    end
+    if peripheral.getType("monitor_0") == "monitor" then
+        return peripheral.wrap("monitor_0"), "monitor_0"
+    elseif peripheral.getType("top") == "monitor" then
+        return peripheral.wrap("top"), "top"
+    end
+    if type(peripheral.getNames) == "function" then
+        for _, name in ipairs(peripheral.getNames()) do
+            if name ~= "monitor_1" and peripheral.getType(name) == "monitor" then
+                return peripheral.wrap(name), name
+            end
+        end
+    end
+    if peripheral.getType("monitor_1") ~= "monitor" then
+        return peripheral.find("monitor")
+    end
+end
+
+monitor, monitor_side = find_main_monitor()
 
 if not monitor then
     local error_monitor
@@ -49,6 +80,25 @@ monitor.clear()
 monitor.setCursorPos(1, 1)
 screen_width, screen_height = monitor.getSize()
 term.redirect(monitor)
+
+local function refresh_main_monitor()
+    local next_monitor, next_side = find_main_monitor()
+    if next_monitor ~= monitor or next_side ~= monitor_side then
+        monitor, monitor_side = next_monitor, next_side
+        if monitor then
+            monitor.setTextScale(0.5)
+            monitor.setBackgroundColor(colors.black)
+            monitor.setTextColor(colors.white)
+            screen_width, screen_height = monitor.getSize()
+            term.redirect(monitor)
+        end
+        candOS.monitor = monitor
+        candOS.monitor_side = monitor_side
+    elseif monitor then
+        screen_width, screen_height = monitor.getSize()
+    end
+    return monitor ~= nil
+end
 
 local function move_to_next_line(output_term, width, height)
     local _, y = output_term.getCursorPos()
@@ -443,8 +493,10 @@ local function draw_window_controls(app)
     button(minimize_x, 1, 3, "-", colors.gray)
 end
 
-local function handle_window_control(event, app)
-    if event[1] ~= "monitor_touch" or event[2] ~= monitor_side or event[4] ~= 1 then
+local function handle_window_control(event, task)
+    if event[1] ~= "monitor_touch"
+        or (event[2] ~= monitor_side and event[2] ~= task.touch_side)
+        or event[4] ~= 1 then
         return nil
     end
     local close_x = math.max(1, screen_width - 5)
@@ -539,11 +591,12 @@ local function insert_at_cursor(state, text)
 end
 
 local function handle_keyboard_touch(task, event)
-    if event[1] ~= "monitor_touch" or event[2] ~= monitor_side then
+    if event[1] ~= "monitor_touch"
+        or (event[2] ~= monitor_side and event[2] ~= task.touch_side) then
         return false, nil
     end
     local x, y = event[3], event[4]
-    local control = handle_window_control(event, task.app)
+    local control = handle_window_control(event, task)
     if control then
         return true, control
     end
@@ -613,6 +666,37 @@ local function find_task(app)
     end
 end
 
+_G.candOS.getTasks = function()
+    local snapshot = {}
+    for _, task in ipairs(tasks) do
+        snapshot[#snapshot + 1] = {
+            name = task.app.name,
+            path = task.app.path,
+            status = task.status
+        }
+    end
+    return snapshot
+end
+
+_G.candOS.getMonitors = function()
+    local monitors = {}
+    local names = type(peripheral.getNames) == "function"
+        and peripheral.getNames() or {}
+    for _, name in ipairs(names) do
+        if peripheral.getType(name) == "monitor" then
+            local device = peripheral.wrap(name)
+            local monitor_width, monitor_height = device.getSize()
+            monitors[#monitors + 1] = {
+                name = name,
+                width = monitor_width,
+                height = monitor_height,
+                primary = name == monitor_side
+            }
+        end
+    end
+    return monitors
+end
+
 local function launch_app_thread(app)
     local thread = coroutine.create(function()
         if type(shell.start) == "function" then
@@ -637,6 +721,7 @@ local function launch_app_thread(app)
     return {
         app = app,
         thread = thread,
+        touch_side = monitor_side,
         pending = nil,
         input_state = nil,
         status = "active"
@@ -683,6 +768,12 @@ local function resume_task(task, ...)
                     draw_input(task)
                 end
                 local event = pack_values(native_pull_event_raw())
+                if event[1] == "peripheral" or event[1] == "peripheral_detach"
+                    or event[1] == "monitor_resize" then
+                    refresh_main_monitor()
+                elseif event[1] == "monitor_touch" and event[2] == monitor_side then
+                    event[2] = task.touch_side or monitor_side
+                end
                 local handled, action = handle_keyboard_touch(task, event)
                 if handled and action == "close" then
                     remove_task(task)
@@ -705,7 +796,13 @@ local function resume_task(task, ...)
                     draw_window_controls(task.app)
                 end
                 local event = pack_values(native_pull_event_raw())
-                local action = handle_window_control(event, task.app)
+                if event[1] == "peripheral" or event[1] == "peripheral_detach"
+                    or event[1] == "monitor_resize" then
+                    refresh_main_monitor()
+                elseif event[1] == "monitor_touch" and event[2] == monitor_side then
+                    event[2] = task.touch_side or monitor_side
+                end
+                local action = handle_window_control(event, task)
                 if action == "close" then
                     remove_task(task)
                     return true, task.app.name .. " cerrada."
@@ -878,10 +975,23 @@ local function run_graphical_launcher()
                     end
                 end
             end
-        elseif event == "monitor_resize" and side == monitor_side then
-            screen_width, screen_height = monitor.getSize()
-        elseif event == "peripheral_detach" and side == monitor_side then
-            return
+        elseif event == "monitor_resize" or event == "peripheral"
+            or event == "peripheral_detach" then
+            refresh_main_monitor()
+            if not monitor then
+                local error_monitor
+                if peripheral.getType("monitor_1") == "monitor" then
+                    error_monitor = peripheral.wrap("monitor_1")
+                end
+                if error_monitor then
+                    error_monitor.setTextScale(0.5)
+                    error_monitor.setBackgroundColor(colors.black)
+                    error_monitor.setTextColor(colors.white)
+                    error_monitor.clear()
+                    error_monitor.setCursorPos(1, 1)
+                    error_monitor.write("CANDOS: falta monitor_0.")
+                end
+            end
         end
     end
 end

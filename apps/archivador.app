@@ -1,186 +1,277 @@
-if not candOS.monitor then
-    print("El Archivador grafico necesita el monitor conectado.")
-    return
-end
-
-local screen = term.current()
-local side = candOS.monitor_side
+local graphics = candOS.graphics
+local monitor = candOS.monitor
+local width, height = monitor.getSize()
 local directory = shell.resolve("/")
 local items = {}
 local page = 1
-local selection
+local selected
+local preview_lines = {}
+local preview_offset = 1
+local message = "Explora tus archivos y unidades."
 
-local function sorted_items(path)
-    local result = {}
-    for _, name in ipairs(fs.list(path)) do
-        result[#result + 1] = {
-            name = name,
-            path = fs.combine(path, name),
-            is_dir = fs.isDir(fs.combine(path, name))
-        }
+local function safe_list(path)
+    if not fs.exists(path) or not fs.isDir(path) then
+        return {}
     end
-    table.sort(result, function(a, b)
-        if a.is_dir ~= b.is_dir then
-            return a.is_dir
+    local names = fs.list(path)
+    table.sort(names, function(a, b)
+        local a_dir = fs.isDir(fs.combine(path, a))
+        local b_dir = fs.isDir(fs.combine(path, b))
+        if a_dir ~= b_dir then
+            return a_dir
         end
-        return a.name:lower() < b.name:lower()
+        return a:lower() < b:lower()
     end)
+    return names
+end
+
+local function refresh()
+    items = safe_list(directory)
+    local page_size = math.max(1, height - 8)
+    page = math.max(1, math.min(page, math.max(1, math.ceil(#items / page_size))))
+end
+
+local function draw_header(title, subtitle)
+    graphics.text(2, 2, title, colors.white, colors.blue, width - 8)
+    graphics.text(2, 3, subtitle, colors.lightGray, colors.black, width - 2)
+end
+
+local function draw_home()
+    graphics.clear(colors.black)
+    draw_header("ARCHIVOS", shell.display(directory))
+    local third = math.max(1, math.floor((width - 4) / 3))
+    graphics.button(2, 4, third, "SUBIR", colors.gray)
+    graphics.button(2 + third, 4, third, "INICIO", colors.blue)
+    graphics.button(2 + third * 2, 4, third, "NUEVO", colors.green)
+    graphics.button(2 + third * 3, 4, math.max(1, width - 2 - (2 + third * 3)),
+        "CARPETA", colors.lightBlue)
+
+    local page_size = math.max(1, height - 8)
+    local first = (page - 1) * page_size + 1
+    for index = first, math.min(first + page_size - 1, #items) do
+        local row = index - first
+        local path = fs.combine(directory, items[index])
+        local is_dir = fs.isDir(path)
+        local icon = is_dir and "[+] " or "[ ] "
+        local background = index % 2 == 0 and colors.gray or colors.black
+        graphics.button(2, 5 + row, width - 4, icon .. items[index], background)
+    end
+    if #items == 0 then
+        graphics.panel(3, 7, width - 6, 5, "Carpeta vacia",
+            colors.white, colors.gray)
+        graphics.centerText(9, "Crea un archivo o una carpeta.", colors.lightGray, colors.gray)
+    end
+
+    graphics.text(2, height - 2,
+        message .. "   Pagina " .. page .. "/" ..
+            math.max(1, math.ceil(#items / page_size)),
+        colors.lightGray, colors.black, width - 2)
+    graphics.button(2, height, math.floor(width / 3), "ANTERIOR", colors.gray)
+    graphics.button(math.floor(width / 3) + 1, height,
+        math.floor(width / 3), "SIGUIENTE", colors.gray)
+    graphics.button(width - math.floor(width / 3) + 1, height,
+        math.floor(width / 3), "CERRAR", colors.red)
+    return page_size, third
+end
+
+local function wrap_lines(contents, max_width)
+    local result = {}
+    for original in (contents .. "\n"):gmatch("(.-)\n") do
+        if original == "" then
+            result[#result + 1] = ""
+        else
+            while #original > max_width do
+                result[#result + 1] = original:sub(1, max_width)
+                original = original:sub(max_width + 1)
+            end
+            result[#result + 1] = original
+        end
+    end
     return result
 end
 
-local function draw_wrapped(x, y, max_y, text)
-    local width = screen.getSize()
-    local words = {}
-    for word in tostring(text):gmatch("%S+") do
-        words[#words + 1] = word
-    end
-    for _, word in ipairs(words) do
-        local cursor_x = select(1, screen.getCursorPos())
-        if cursor_x > x and cursor_x + #word > width then
-            y = y + 1
-            if y > max_y then
-                return y
-            end
-            screen.setCursorPos(x, y)
-        end
-        screen.write(word)
-        if _ ~= #words then
-            cursor_x = select(1, screen.getCursorPos())
-            if cursor_x + #words[_ + 1] <= width then
-                screen.write(" ")
-            else
-                y = y + 1
-                if y > max_y then
-                    return y
-                end
-                screen.setCursorPos(x, y)
-            end
-        end
-    end
-    return y
-end
-
-local function write_cell(x, y, text, width, background)
-    local screen_width = select(1, screen.getSize())
-    if x > screen_width or y < 1 then
-        return
-    end
-    width = math.min(width, screen_width - x + 1)
-    text = tostring(text)
-    if #text > width then
-        text = text:sub(1, width)
-        local last_space = text:match(".*()%s")
-        if last_space then
-            text = text:sub(1, last_space - 1)
-        end
-    end
-    screen.setCursorPos(x, y)
-    screen.setBackgroundColor(background or colors.black)
-    screen.setTextColor(colors.white)
-    screen.write(text .. string.rep(" ", width - #text))
-end
-
-local function redraw_view_file()
-    local file, err = fs.open(selection.path, "r")
+local function open_preview(item)
+    local file, err = fs.open(item.path, "r")
     if not file then
-        selection = nil
-        return "No se pudo abrir el archivo: " .. tostring(err)
+        message = "No se pudo abrir: " .. tostring(err)
+        selected = nil
+        return
     end
     local contents = file.readAll()
     file.close()
+    selected = item
+    preview_lines = wrap_lines(contents, math.max(1, width - 6))
+    preview_offset = 1
+end
 
-    screen.setBackgroundColor(colors.black)
-    screen.clear()
-    local width, height = screen.getSize()
-    write_cell(1, 1, " ARCHIVADOR | " .. selection.name, width, colors.blue)
-    write_cell(1, 2, " TOCA ABAJO PARA VOLVER ", width, colors.gray)
-    local line_number = 3
+local function draw_preview()
+    graphics.clear(colors.black)
+    draw_header(selected.name, shell.display(selected.path))
+    local body_height = math.max(3, height - 9)
+    local total = #preview_lines
+    local last_offset = math.max(1, total - body_height + 1)
+    preview_offset = math.max(1, math.min(preview_offset, last_offset))
+    graphics.textArea(2, 4, width - 4, body_height,
+        preview_lines, preview_offset, colors.white, colors.gray)
+    graphics.text(2, height - 3,
+        "Linea " .. preview_offset .. "-" ..
+            math.min(total, preview_offset + body_height - 3) ..
+            " de " .. total .. " | " .. message,
+        colors.lightGray, colors.black, width - 2)
+    local slots = selected.name:lower():match("%.app$") and 4 or 3
+    local button_width = math.max(1, math.floor((width - 2) / slots))
+    graphics.button(2, height, button_width, "ATRAS", colors.gray)
+    graphics.button(2 + button_width, height, button_width, "EDITAR", colors.blue)
+    if slots == 4 then
+        graphics.button(2 + button_width * 2, height, button_width,
+            "EJECUTAR", colors.green)
+        graphics.button(2 + button_width * 3, height, width,
+            "BORRAR", colors.red)
+    else
+        graphics.button(2 + button_width * 2, height, width,
+            "BORRAR", colors.red)
+    end
+    return button_width
+end
+
+local function create_file()
+    local name = input("Nombre del archivo", "nuevo.txt")
+    if name == "" then
+        message = "Nombre vacio; no se creo el archivo."
+        return
+    end
+    local path = fs.combine(directory, name)
+    if fs.exists(path) then
+        message = "Ya existe ese nombre."
+        return
+    end
+    local file, err = fs.open(path, "w")
+    if not file then
+        message = "No se pudo crear: " .. tostring(err)
+        return
+    end
+    local text = input("Contenido inicial (opcional)")
+    file.write(text)
+    file.close()
+    message = "Archivo creado: " .. name
+    refresh()
+end
+
+local function create_folder()
+    local name = input("Nombre de la carpeta")
+    if name == "" then
+        message = "Nombre vacio; no se creo la carpeta."
+        return
+    end
+    local path = fs.combine(directory, name)
+    if fs.exists(path) then
+        message = "Ya existe ese nombre."
+        return
+    end
+    fs.makeDir(path)
+    message = "Carpeta creada: " .. name
+    refresh()
+end
+
+local function edit_selected()
+    local contents = table.concat(preview_lines, "\n")
+    local lines = {}
     for line in (contents .. "\n"):gmatch("(.-)\n") do
-        if line_number >= height then
+        lines[#lines + 1] = line
+    end
+    while true do
+        local line = input("Linea (SAVE para terminar)",
+            lines[#lines] or "")
+        if line == "SAVE" then
             break
         end
-        screen.setCursorPos(1, line_number)
-        line_number = draw_wrapped(1, line_number, height - 1, line)
-        line_number = line_number + 1
+        lines[#lines + 1] = line
     end
-    write_cell(1, height, selection.name:lower():match("%.app$")
-        and " EJECUTAR: TOCA IZQUIERDA | VOLVER: DERECHA"
-        or " VOLVER AL ARCHIVADOR ", width, colors.gray)
+    local file, err = fs.open(selected.path, "w")
+    if not file then
+        message = "No se pudo guardar: " .. tostring(err)
+        return
+    end
+    file.write(table.concat(lines, "\n"))
+    file.close()
+    open_preview(selected)
+    message = "Cambios guardados."
 end
 
-local function redraw()
-    items = sorted_items(directory)
-    local width, height = screen.getSize()
-    local page_size = math.max(1, height - 5)
-    local page_count = math.max(1, math.ceil(#items / page_size))
-    page = math.max(1, math.min(page, page_count))
-
-    screen.setBackgroundColor(colors.black)
-    screen.clear()
-    write_cell(1, 1, " CANDOS | ARCHIVADOR ", width, colors.blue)
-    write_cell(1, 2, " " .. shell.display(directory) .. " ", width, colors.black)
-    write_cell(1, 3, " SUBIR ", math.floor(width / 3), colors.gray)
-    write_cell(math.floor(width / 3) + 1, 3, " INICIO ", math.floor(width / 3), colors.gray)
-    write_cell(width - math.floor(width / 3) + 1, 3, " SALIR ", math.floor(width / 3), colors.red)
-
-    local first = (page - 1) * page_size + 1
-    for index = first, math.min(first + page_size - 1, #items) do
-        local y = 3 + index - first + 1
-        local item = items[index]
-        local kind = item.is_dir and "[DIR] " or "[FILE] "
-        write_cell(1, y, string.format("%d. %s%s", index, kind, item.name),
-            width, index % 2 == 0 and colors.gray or colors.black)
-    end
-    if #items == 0 then
-        write_cell(2, 5, "Esta carpeta esta vacia.", width - 1, colors.black)
-    end
-    write_cell(1, height, " TOCA UN ELEMENTO | PAGINA " .. page .. "/" .. page_count,
-        width, colors.blue)
-    return page_size, page_count
-end
-
+refresh()
 while true do
-    if selection then
-        redraw_view_file()
-        local event, touch_side, x, y = os.pullEvent()
-        if event == "monitor_touch" and touch_side == side and y == select(2, screen.getSize()) then
-            if x < select(1, screen.getSize()) / 2 and selection.name:lower():match("%.app$") then
-                screen.setBackgroundColor(colors.black)
-                screen.clear()
-                screen.setCursorPos(1, 1)
-                local ok, err = shell.start(selection.path, {})
-                if not ok then
-                    print(err)
+    if selected then
+        local button_width = draw_preview()
+        local event, side, x, y = os.pullEvent()
+        if event == "monitor_touch" and side == candOS.monitor_side then
+            if y == height then
+                if x < 2 + button_width then
+                    selected = nil
+                    refresh()
+                elseif x < 2 + button_width * 2 then
+                    edit_selected()
+                elseif selected.name:lower():match("%.app$")
+                    and x < 2 + button_width * 3 then
+                    local ok, err = shell.start(selected.path, {})
+                    if not ok then
+                        message = "Error al ejecutar: " .. tostring(err)
+                    end
+                else
+                    local answer = input("Escribe BORRAR para confirmar")
+                    if answer == "BORRAR" then
+                        fs.delete(selected.path)
+                        message = "Archivo eliminado."
+                        selected = nil
+                        refresh()
+                    else
+                        message = "Eliminacion cancelada."
+                    end
                 end
+            elseif y == 4 then
+                preview_offset = math.max(1, preview_offset - 1)
+            elseif y >= height - 4 then
+                preview_offset = math.min(#preview_lines, preview_offset + 1)
             end
-            selection = nil
         end
     else
-        local page_size, page_count = redraw()
-        local event, touch_side, x, y = os.pullEvent()
-        if event == "monitor_touch" and touch_side == side then
-            local width, height = screen.getSize()
-            if y == 3 then
+        local page_size, third = draw_home()
+        local event, side, x, y = os.pullEvent()
+        if event == "monitor_touch" and side == candOS.monitor_side then
+            if y == 4 then
+                if x < 2 + third then
+                    directory = directory == shell.resolve("/") and directory
+                        or fs.getDir(directory)
+                    page = 1
+                    refresh()
+                elseif x < 2 + third * 2 then
+                    directory = shell.resolve("/")
+                    page = 1
+                    refresh()
+                elseif x < 2 + third * 3 then
+                    create_file()
+                else
+                    create_folder()
+                end
+            elseif y == height then
                 if x <= math.floor(width / 3) then
-                    directory = directory == "" and "" or fs.getDir(directory)
-                    page = 1
+                    page = math.max(1, page - 1)
                 elseif x <= math.floor(width * 2 / 3) then
-                    directory = ""
-                    page = 1
+                    page = math.min(math.max(1, math.ceil(#items / page_size)), page + 1)
                 else
                     break
                 end
-            elseif y == height then
-                page = page % page_count + 1
-            elseif y >= 4 and y < 4 + page_size then
-                local index = (page - 1) * page_size + y - 3
-                local item = items[index]
-                if item then
-                    if item.is_dir then
-                        directory = item.path
+            elseif y >= 5 and y < 5 + page_size then
+                local index = (page - 1) * page_size + y - 4
+                local name = items[index]
+                if name then
+                    local path = fs.combine(directory, name)
+                    if fs.isDir(path) then
+                        directory = path
                         page = 1
+                        message = "Carpeta abierta: " .. name
+                        refresh()
                     else
-                        selection = item
+                        open_preview({name = name, path = path})
                     end
                 end
             end
