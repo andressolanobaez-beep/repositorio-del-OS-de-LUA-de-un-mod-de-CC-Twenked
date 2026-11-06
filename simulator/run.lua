@@ -276,11 +276,15 @@ shell = {
 }
 local native_shell_environment = shell
 
-local event_sent = false
+local touch_events = {
+    {"monitor_touch", "top", 25, height}
+}
+local touch_index = 0
 os.pullEvent = function()
-    check(not event_sent, "CANDOS solicito mas eventos de los esperados")
-    event_sent = true
-    return "monitor_touch", "top", 25, height
+    touch_index = touch_index + 1
+    local event = touch_events[touch_index]
+    check(event ~= nil, "CANDOS solicito mas eventos de los esperados")
+    return table.unpack(event)
 end
 os.getComputerLabel = function()
     return "CANDOS simulator"
@@ -316,7 +320,7 @@ end
 
 local ok, startup_error = xpcall(startup, debug.traceback)
 check(ok, "Fallo al arrancar: " .. tostring(startup_error))
-check(event_sent, "El lanzador no recibio el toque simulado para salir")
+check(touch_index == #touch_events, "El lanzador no proceso todos los toques simulados")
 check(type(shell.load_imports) == "function", "shell.load_imports no fue exportada")
 check(type(shell.list_apps) == "function", "shell.list_apps no fue exportada")
 check(type(shell.start) == "function", "shell.start no fue exportada")
@@ -343,12 +347,6 @@ local old_shell_api = {
     dir = function()
         return "/"
     end,
-    list_apps = function()
-        return {}
-    end,
-    start = function()
-        return true
-    end,
     run = function()
         return true
     end,
@@ -365,7 +363,11 @@ loadfile = function(path, mode, environment)
     return real_loadfile(path, mode, environment)
 end
 shell = native_shell_environment
-event_sent = false
+touch_events = {
+    {"monitor_touch", "top", 5, 5},
+    {"monitor_touch", "top", 25, height}
+}
+touch_index = 0
 monitor_writes = {}
 clear_screen()
 
@@ -383,10 +385,17 @@ for _, write in ipairs(monitor_writes) do
 end
 check(table.concat(writes):find("no admite la carga de drivers", 1, true) ~= nil,
     "No se aviso cuando shell.py es una version anterior")
+check(table.concat(writes):find("> archivador", 1, true) ~= nil,
+    "La lista de apps de disk2 no se mostro con una shell anterior sin list_apps")
+check(touch_index == #touch_events,
+    "El lanzador de compatibilidad no ejecuto y cerro tras los toques simulados")
 
 loadfile = real_loadfile
 shell = nil
-event_sent = false
+touch_events = {
+    {"monitor_touch", "top", 25, height}
+}
+touch_index = 0
 monitor_writes = {}
 clear_screen()
 

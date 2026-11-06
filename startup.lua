@@ -129,7 +129,35 @@ else
 end
 
 local function collect_apps()
-    return shell.list_apps()
+    if type(shell.list_apps) == "function" then
+        return shell.list_apps()
+    end
+
+    local apps = {}
+    local function scan(directory, depth)
+        if depth > 10 or not fs.exists(directory) or not fs.isDir(directory) then
+            return
+        end
+        for _, name in ipairs(fs.list(directory)) do
+            local path = fs.combine(directory, name)
+            if fs.isDir(path) then
+                scan(path, depth + 1)
+            elseif name:lower():match("%.app$") then
+                apps[#apps + 1] = {
+                    name = name,
+                    path = path,
+                    side = "CANDOS",
+                    relative_path = path
+                }
+            end
+        end
+    end
+
+    scan("/disk2/apps", 0)
+    table.sort(apps, function(a, b)
+        return a.name:lower() < b.name:lower()
+    end)
+    return apps
 end
 
 local function screen_write(x, y, text, foreground, background, max_width)
@@ -218,7 +246,26 @@ local function execute_app(app)
         monitor.clear()
         monitor.setCursorPos(1, 1)
     end
-    local ok, runtime_error = shell.start(app.path, {})
+    local ok, runtime_error
+    if type(shell.start) == "function" then
+        ok, runtime_error = shell.start(app.path, {})
+    else
+        local file, open_error = fs.open(app.path, "r")
+        if not file then
+            ok, runtime_error = false, "No se pudo abrir " .. app.path ..
+                ": " .. tostring(open_error)
+        else
+            local source = file.readAll()
+            file.close()
+            local program, syntax_error = load(source, "@" .. app.path, "t", _ENV)
+            if not program then
+                ok, runtime_error = false, "Error de sintaxis en " .. app.path ..
+                    ": " .. tostring(syntax_error)
+            else
+                ok, runtime_error = pcall(program)
+            end
+        end
+    end
     if monitor then
         term.redirect(monitor)
         monitor.setBackgroundColor(colors.black)

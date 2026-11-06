@@ -3,7 +3,8 @@
 Run `npm install` once, then `npm test` to boot the real `startup.lua` and
 `shell.py` against a simulated 50x50 monitor, filesystem, and touch event.
 The test checks app discovery from `disk2` and reproduces the older shell API
-that caused `shell.load_imports` to be nil.
+that caused `shell.load_imports` and `shell.list_apps` to be nil. It also checks
+that the launcher can still list apps and open one with that older API.
 
 This is a focused regression simulator, not a replacement for Minecraft or the
 CC:Tweaked runtime. It uses Fengari's Lua 5.3 interpreter and mocks the CC APIs
