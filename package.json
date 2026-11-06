@@ -1,0 +1,10 @@
+{
+  "name": "candos-cc-tweaked-simulator",
+  "private": true,
+  "scripts": {
+    "test": "fengari simulator/run.lua"
+  },
+  "devDependencies": {
+    "fengari-node-cli": "^0.1.0"
+  }
+}
