@@ -1,12 +1,24 @@
 local arguments = {...}
-print("Hola desde una app Lua de CANDOS.")
+local graphics = candOS.graphics
+local monitor = candOS.monitor
+local width, height = monitor.getSize()
+
+graphics.clear(colors.black)
+graphics.text(2, 1, "BIENVENIDO A CANDOS", colors.white, colors.blue, width - 8)
+graphics.panel(4, 5, width - 8, 11, "Hola", colors.white, colors.gray)
+graphics.centerText(9, "Tu sistema ya esta listo.", colors.white, colors.gray)
 if #arguments > 0 then
-    print("Argumentos recibidos:")
-    for index, value in ipairs(arguments) do
-        print(index .. ": " .. value)
-    end
+    graphics.centerText(12, table.concat(arguments, " "), colors.lightBlue, colors.gray)
 else
-    print("Prueba: start hola.app hola mundo")
+    graphics.centerText(12, "Abre una app desde Inicio.", colors.lightBlue, colors.gray)
 end
-print("Toca cualquier tecla para volver.")
-os.pullEvent("key")
+graphics.button(math.floor((width - 14) / 2), height - 3, 14,
+    "VOLVER", colors.blue)
+
+while true do
+    local event, side, _, y = os.pullEvent()
+    if event == "monitor_touch" and side == candOS.monitor_side
+        and y == height - 3 then
+        break
+    end
+end

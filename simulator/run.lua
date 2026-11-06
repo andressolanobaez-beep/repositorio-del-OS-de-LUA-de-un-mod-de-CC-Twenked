@@ -42,11 +42,33 @@ end
 
 local app_names = {
     "archivador.app",
+    "adivina.app",
+    "bloc.app",
+    "calculadora.app",
     "hardware.app",
     "hola.app",
     "notas.app",
-    "terminal.app"
+    "reloj.app",
+    "terminal.app",
+    "test_input.app",
+    "tres_en_raya.app"
 }
+
+local test_input_source = [[
+local first = input("Primero")
+local second = io.read()
+print("RESULT:" .. first .. ":" .. second)
+local number = io.read("*n")
+print("NUMBER:" .. tostring(number))
+local _, key = os.pullEvent("key")
+print("EVENT:" .. tostring(key))
+os.pullEvent("key")
+]]
+local calculator_left, calculator_operator, calculator_right =
+    ("-12.5 / 2"):match("^%s*(%-?[%d%.]+)%s*([%+%-%*/])%s*(%-?[%d%.]+)%s*$")
+check(tonumber(calculator_left) == -12.5 and calculator_operator == "/"
+    and tonumber(calculator_right) == 2,
+    "La expresion de calculadora no reconoce negativos, decimales y operadores")
 
 local system_files = {
     ["buzzer.lua"] = true,
@@ -114,6 +136,9 @@ fs = {
             local contents = path == "disk2/importing.txt"
                 and "# Simulator fixture: no startup imports.\n"
                 or ""
+            if path == "disk2/apps/test_input.app" then
+                contents = test_input_source
+            end
             local closed = false
             return {
                 readAll = function()
@@ -147,6 +172,8 @@ local width, height = 50, 50
 local cursor_x, cursor_y = 1, 1
 local screen = {}
 local monitor_writes = {}
+local monitor_1_only = false
+local terminal_write_count = 0
 local function clear_screen()
     screen = {}
     for row = 1, height do
@@ -207,6 +234,7 @@ function terminal.getCursorPos()
     return cursor_x, cursor_y
 end
 function terminal.write(text)
+    terminal_write_count = terminal_write_count + 1
     monitor.write(text)
 end
 function terminal.scroll(lines)
@@ -241,13 +269,19 @@ colors = {
 
 peripheral = {
     getType = function(name)
+        if monitor_1_only then
+            return name == "monitor_1" and "monitor" or nil
+        end
         return name == "top" and "monitor" or nil
     end,
     wrap = function(name)
+        if monitor_1_only then
+            return name == "monitor_1" and monitor or nil
+        end
         return name == "top" and monitor or nil
     end,
     find = function(kind)
-        if kind == "monitor" then
+        if kind == "monitor" and not monitor_1_only then
             return monitor, "top"
         end
         return nil
@@ -277,7 +311,8 @@ shell = {
 local native_shell_environment = shell
 
 local touch_events = {
-    {"monitor_touch", "top", 25, height}
+    {"monitor_touch", "top", 25, height},
+    {"peripheral_detach", "top"}
 }
 local touch_index = 0
 os.pullEvent = function()
@@ -286,6 +321,7 @@ os.pullEvent = function()
     check(event ~= nil, "CANDOS solicito mas eventos de los esperados")
     return table.unpack(event)
 end
+os.pullEventRaw = os.pullEvent
 os.getComputerLabel = function()
     return "CANDOS simulator"
 end
@@ -305,12 +341,19 @@ local lua_files = {
     "buzzer.lua",
     "disk_manager.lua",
     "hello.lua",
+    "installer.lua",
     "shell.py",
     "startup.lua",
     "utils.lua"
 }
 for _, app_name in ipairs(app_names) do
-    lua_files[#lua_files + 1] = "apps/" .. app_name
+    if app_name ~= "test_input.app" then
+        lua_files[#lua_files + 1] = "apps/" .. app_name
+    else
+        local chunk, syntax_error = load(test_input_source, "@test_input.app", "t", _ENV)
+        check(chunk ~= nil, "Error de sintaxis en la app de prueba: " ..
+            tostring(syntax_error))
+    end
 end
 for _, path in ipairs(lua_files) do
     local chunk, syntax_error = native_loadfile(path)
@@ -327,7 +370,8 @@ check(type(shell.start) == "function", "shell.start no fue exportada")
 check(shell.dir() == "/", "La raiz logica de CANDOS no es /")
 
 local apps = shell.list_apps()
-check(#apps == #app_names, "Se esperaban 5 apps; se encontraron " .. #apps)
+check(#apps == #app_names, "Se esperaban " .. #app_names ..
+    " apps; se encontraron " .. #apps)
 check(shell.where("terminal") == "disk2/apps/terminal.app",
     "No se encontro la app terminal en disk2/apps")
 check(shell.resolve("/notas.txt") == "disk2/notas.txt",
@@ -335,7 +379,7 @@ check(shell.resolve("/notas.txt") == "disk2/notas.txt",
 
 local launcher_visible = false
 for _, write in ipairs(monitor_writes) do
-    if write.y == 1 and write.text:find("CANDOS | LANZADOR DE APPS", 1, true) then
+    if write.y == 1 and write.text:find("CANDOS  |  INICIO", 1, true) then
         launcher_visible = true
         break
     end
@@ -365,7 +409,7 @@ end
 shell = native_shell_environment
 touch_events = {
     {"monitor_touch", "top", 5, 5},
-    {"monitor_touch", "top", 25, height}
+    {"peripheral_detach", "top"}
 }
 touch_index = 0
 monitor_writes = {}
@@ -385,7 +429,7 @@ for _, write in ipairs(monitor_writes) do
 end
 check(table.concat(writes):find("no admite la carga de drivers", 1, true) ~= nil,
     "No se aviso cuando shell.py es una version anterior")
-check(table.concat(writes):find("> archivador", 1, true) ~= nil,
+check(table.concat(writes):find(" archivador", 1, true) ~= nil,
     "La lista de apps de disk2 no se mostro con una shell anterior sin list_apps")
 check(touch_index == #touch_events,
     "El lanzador de compatibilidad no ejecuto y cerro tras los toques simulados")
@@ -393,7 +437,8 @@ check(touch_index == #touch_events,
 loadfile = real_loadfile
 shell = nil
 touch_events = {
-    {"monitor_touch", "top", 25, height}
+    {"monitor_touch", "top", 25, height},
+    {"peripheral_detach", "top"}
 }
 touch_index = 0
 monitor_writes = {}
@@ -410,11 +455,75 @@ check(no_native_shell_ok,
     "El arranque necesita una shell nativa: " .. tostring(no_native_shell_error))
 check(type(shell.load_imports) == "function",
     "Falta load_imports cuando no hay shell nativa")
+local graphics_width, graphics_height = candOS.graphics.getSize()
+check(graphics_width == width and graphics_height == height,
+    "La API grafica no informo el tamano del monitor")
+check(type(candOS.graphics.panel) == "function"
+    and type(candOS.graphics.textArea) == "function"
+    and type(candOS.graphics.switch) == "function"
+    and type(candOS.graphics.progressBar) == "function",
+    "Faltan controles graficos reutilizables")
+
+shell = nil
+touch_events = {
+    {"monitor_touch", "top", 5, 24},
+    {"monitor_touch", "top", 31, height - 3},
+    {"monitor_touch", "top", 38, height - 4},
+    {"monitor_touch", "top", 48, 1},
+    {"monitor_touch", "top", 25, height - 3},
+    {"monitor_touch", "top", 45, height},
+    {"monitor_touch", "top", 43, height - 4},
+    {"monitor_touch", "top", 41, height - 3},
+    {"monitor_touch", "top", 45, height},
+    {"monitor_touch", "top", 18, height - 4},
+    {"monitor_touch", "top", 45, height},
+    {"monitor_touch", "top", 48, 1},
+    {"monitor_touch", "top", 25, height - 3},
+    {"key", "x"},
+    {"monitor_touch", "top", 45, 1},
+    {"peripheral_detach", "top"}
+}
+touch_index = 0
+monitor_writes = {}
+clear_screen()
+local interactive_startup = assert(native_loadfile("startup.lua"))
+local interactive_ok, interactive_error =
+    xpcall(interactive_startup, debug.traceback)
+check(interactive_ok, "Fallo la prueba de input/minimizar: " ..
+    tostring(interactive_error))
+local interactive_output = {}
+for _, write in ipairs(monitor_writes) do
+    interactive_output[#interactive_output + 1] = write.text
+end
+local rendered = table.concat(interactive_output)
+local result_position = rendered:find("RESULT:", 1, true)
+local result_text = result_position
+    and rendered:sub(result_position, result_position + 30) or "missing"
+check(rendered:find("RESULT:hi:ok", 1, true) ~= nil,
+    "io.read/input perdieron el texto al minimizar y reanudar: " .. result_text)
+check(rendered:find("NUMBER:4", 1, true) ~= nil,
+    "io.read('*n') no entrego un valor numerico desde el teclado grafico")
+check(rendered:find("EVENT:x", 1, true) ~= nil,
+    "La app no recibio el evento al reanudarse")
+check(touch_index == #touch_events,
+    "La app interactiva no se cerro con el boton X")
+
+monitor_1_only = true
+monitor_writes = {}
+clear_screen()
+local previous_terminal_writes = terminal_write_count
+local missing_monitor_startup = assert(native_loadfile("startup.lua"))
+local missing_monitor_ok, missing_monitor_error =
+    xpcall(missing_monitor_startup, debug.traceback)
+check(missing_monitor_ok, "El arranque con solo monitor_1 fallo: " ..
+    tostring(missing_monitor_error))
+check(screen[1]:find("CANDOS: falta monitor_0", 1, true) ~= nil,
+    "No se mostro el error en monitor_1 cuando falta monitor_0")
+check(terminal_write_count == previous_terminal_writes,
+    "El sistema intento usar la terminal principal de la PC")
 
 io.write(string.format(
-    "PASS: %d archivos Lua validos; CANDOS arranca en %dx%d con shell actual, shell anterior y sin shell nativa; %d apps detectadas; rutas confinadas a disk2.\n",
+    "PASS: %d archivos Lua validos; %d apps; arranque grafico sin terminal principal; input grafico, pausa y cierre comprobados.\n",
     #lua_files,
-    width,
-    height,
     #apps
 ))
