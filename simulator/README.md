@@ -4,16 +4,23 @@ Run `npm install` once, then `npm test` to boot `boot/startup.lua` and
 `boot/shell.py` against a simulated 50x50 monitor, filesystem, Basalt controls,
 and touch events. The fixture uses the installed layout:
 
-- `/disk2/boot/` contains the OS runtime and libraries, including Basalt.
-- `/disk2/apps/<name>.app/` contains `main.app` and `icon.app`.
+- `/disk2/boot/` contains the core OS runtime and one Basalt segment.
+- `/disk/apps/`, `/disk2/apps/`, `/disk3/apps/`, and `/disk4/apps/` hold
+  weighted groups of app packages; each `.app/` contains `main.app` and
+  `icon.app`.
+- Basalt is split into four ordered parts, one per disk, and reassembled by
+  the runtime. The shell and its app search discover mounted disks by their
+  peripheral mount paths.
 - `/disk2/files/` is the user's default working directory.
 
-The test checks all 30 app packages and their icon metadata, discovery of
-dynamically named drives, monitors, printers, and modems, compatibility with
-older shell APIs, graphical `input()`/`io.read()`, bordered Basalt keyboard
-controls, and pausing, resuming, and closing an app. It also verifies startup
-reports a missing main monitor on `monitor_1` without writing to the computer
-terminal.
+The test checks all 30 app packages and their icon metadata across all four
+disks, runs the installer against four capacity-limited disk fixtures, checks
+Basalt loading from its four parts, and verifies existing user files and
+configuration survive installation. It also tests discovery of dynamically
+named drives, monitors, printers, and modems, compatibility with older shell
+APIs, graphical `input()`/`io.read()`, bordered Basalt keyboard controls, and
+pausing, resuming, and closing an app. Startup must report a missing main
+monitor on `monitor_1` without writing to the computer terminal.
 
 The **Dispositivos** app lists peripherals as they connect and disconnect.
 The **Red CANDOS** app searches only after the user enables discovery; PCs need

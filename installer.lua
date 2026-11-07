@@ -1,26 +1,30 @@
 local REPOSITORY = "andressolanobaez-beep/repositorio-del-OS-de-LUA-de-un-mod-de-CC-Twenked"
-local REVISION = "60b9cb25b441b3b6f8e793853cdd3484a28b862d"
+local REVISION = "9d7ade16e3d1d4294857cd8bc2fdec5eda6694b1"
 local RAW_BASE = "https://raw.githubusercontent.com/" .. REPOSITORY .. "/" .. REVISION .. "/"
 local BASALT_REVISION = "14c0630c1e110c5b507534e19e6c9607ba10df3e"
 local BASALT_BASE = "https://raw.githubusercontent.com/Pyroxenium/Basalt/" ..
     BASALT_REVISION .. "/"
 local INSTALL_DIR = "disk"
 local SYSTEM_ROOT = "disk2"
+local APP_DISK_3 = "disk3"
+local APP_DISK_4 = "disk4"
 local SYSTEM_APPS_DIR = "apps"
 local SYSTEM_BOOT_DIR = "boot"
 local SYSTEM_FILES_DIR = "files"
+local DISK_ROOTS = {INSTALL_DIR, SYSTEM_ROOT, APP_DISK_3, APP_DISK_4}
 
 local files = {
     {source = "boot/startup.lua", root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/startup.lua"},
-    {source = "boot/shell.py", root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/shell.py"},
+    {source = "boot/shell.py", root = APP_DISK_4, target = SYSTEM_BOOT_DIR .. "/shell.py"},
     {source = "boot/utils.lua", root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/utils.lua"},
     {source = "boot/disk_manager.lua", root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/disk_manager.lua"},
     {source = "boot/buzzer.lua", root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/buzzer.lua"},
     {source = "boot/importing.txt", root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/importing.txt", preserve_existing = true},
-    {source = "basalt-1.6.6.lua", url = BASALT_BASE .. "docs/versions/basalt-1.6.6.lua",
-        root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/lib/basalt.lua"},
+    {source = "basalt-1.6.6.lua",
+        url = BASALT_BASE .. "docs/versions/basalt-1.6.6.lua",
+        split_basalt = true},
     {source = "Basalt-MIT-LICENSE.txt", url = BASALT_BASE .. "LICENSE",
-        root = SYSTEM_ROOT, target = SYSTEM_BOOT_DIR .. "/licenses/Basalt-MIT-LICENSE.txt"}
+        root = APP_DISK_4, target = SYSTEM_BOOT_DIR .. "/licenses/Basalt-MIT-LICENSE.txt"}
 }
 
 local app_names = {
@@ -31,10 +35,39 @@ local app_names = {
     "tareas", "temporizador", "terminal", "tres_en_raya"
 }
 
-for index, name in ipairs(app_names) do
+local app_disk_groups = {
+    [INSTALL_DIR] = {
+        "archivador", "dispositivos", "quiz", "ppt", "moneda"
+    },
+    [SYSTEM_ROOT] = {
+        "red", "ajustes", "pong", "bloc", "hardware", "notas"
+    },
+    [APP_DISK_3] = {
+        "candos_fps", "tres_en_raya", "memoria", "simon",
+        "matematicas", "adivina", "hola", "reloj", "terminal"
+    },
+    [APP_DISK_4] = {
+        "carrera", "temporizador", "calendario", "palabra",
+        "calculadora", "reflejos", "convertidor", "mayor_menor",
+        "tareas", "dados"
+    }
+}
+local app_roots = {}
+for root, names in pairs(app_disk_groups) do
+    for _, name in ipairs(names) do
+        if app_roots[name] then
+            error("La app " .. name .. " fue asignada a mas de un disquete.")
+        end
+        app_roots[name] = root
+    end
+end
+
+for _, name in ipairs(app_names) do
     local package = name .. ".app"
-    local app_root = index <= math.floor(#app_names / 2)
-        and INSTALL_DIR or SYSTEM_ROOT
+    local app_root = app_roots[name]
+    if not app_root then
+        error("La app " .. name .. " no fue asignada a un disquete.")
+    end
     for _, member in ipairs({"main.app", "icon.app"}) do
         local source = "apps/" .. package .. "/" .. member
         files[#files + 1] = {
@@ -85,6 +118,19 @@ local function write_file(path, contents)
     return true
 end
 
+local function split_basalt(contents)
+    local fractions = {0.27, 0.38, 0.75, 1}
+    local previous_end = 0
+    local chunks = {}
+    for index, fraction in ipairs(fractions) do
+        local chunk_end = index == #fractions
+            and #contents or math.floor(#contents * fraction)
+        chunks[index] = contents:sub(previous_end + 1, chunk_end)
+        previous_end = chunk_end
+    end
+    return chunks
+end
+
 local function read_running_installer()
     local path = shell.getRunningProgram()
     if not path or path == "" then
@@ -106,10 +152,10 @@ if not http or type(http.get) ~= "function" then
     return
 end
 
-for _, directory in ipairs({INSTALL_DIR, SYSTEM_ROOT}) do
+for _, directory in ipairs(DISK_ROOTS) do
     if not fs.exists(directory) or not fs.isDir(directory) then
         stop("No se encontro la carpeta /" .. directory ..
-            ". Conecta las unidades de instalacion y almacenamiento y vuelve a intentarlo.")
+            ". Conecta los cuatro disquetes y vuelve a intentarlo.")
         return
     end
 end
@@ -129,12 +175,15 @@ local function confirm_installation()
     print("")
     print("CANDOS se instalara asi:")
     print("  /" .. INSTALL_DIR .. "/startup.lua: lanzador de inicio")
-    print("  /" .. SYSTEM_ROOT .. "/boot: sistema operativo y librerias")
-    print("  /" .. INSTALL_DIR .. "/apps: 15 aplicaciones en carpetas .app")
-    print("  /" .. SYSTEM_ROOT .. "/apps: 15 aplicaciones en carpetas .app")
+    print("  /" .. SYSTEM_ROOT .. "/boot: nucleo y archivos del sistema")
+    print("  /" .. APP_DISK_4 .. "/boot: shell y parte de Basalt")
+    print("  Basalt y las 30 apps se reparten entre los cuatro disquetes.")
+    for _, root in ipairs(DISK_ROOTS) do
+        print("  /" .. root .. "/apps: " ..
+            #app_disk_groups[root] .. " aplicaciones .app")
+    end
     print("  /" .. SYSTEM_ROOT .. "/" .. SYSTEM_FILES_DIR .. ": archivos del usuario")
     print("  /" .. INSTALL_DIR .. "/installer.lua: instalador para actualizar")
-    print("La BIOS en /disk3 no se consulta ni se modifica.")
     print("Los documentos y las apps personales existentes se conservaran.")
     print("Las apps antiguas incluidas se respaldaran antes de empaquetarse.")
     write("Escribe INSTALAR para continuar: ")
@@ -156,20 +205,42 @@ for index, entry in ipairs(files) do
             "\nNo se escribieron archivos. Comprueba la conexion y vuelve a intentarlo.")
         return
     else
-        downloaded[#downloaded + 1] = {
-            target = fs.combine(entry.root, entry.target),
-            contents = contents,
-            source = entry.source,
-            preserve_existing = entry.preserve_existing
-        }
+        if entry.split_basalt then
+            for part, chunk in ipairs(split_basalt(contents)) do
+                local root = DISK_ROOTS[part]
+                downloaded[#downloaded + 1] = {
+                    target = fs.combine(root, SYSTEM_BOOT_DIR,
+                        "lib/basalt/part" .. part .. ".lua"),
+                    contents = chunk,
+                    source = "Basalt parte " .. part .. "/4"
+                }
+            end
+        else
+            downloaded[#downloaded + 1] = {
+                target = fs.combine(entry.root, entry.target),
+                contents = contents,
+                source = entry.source,
+                preserve_existing = entry.preserve_existing
+            }
+        end
         print("OK")
     end
 
 end
 
+local legacy_basalt = fs.combine(SYSTEM_ROOT, SYSTEM_BOOT_DIR,
+    "lib/basalt.lua")
+if fs.exists(legacy_basalt) and not fs.isDir(legacy_basalt) then
+    fs.delete(legacy_basalt)
+    if fs.exists(legacy_basalt) then
+        stop("No se pudo liberar el Basalt antiguo en /" .. legacy_basalt ..
+            ". Libera ese archivo y vuelve a ejecutar el instalador.")
+        return
+    end
+end
+
 for _, directory in ipairs({
-    SYSTEM_APPS_DIR, SYSTEM_FILES_DIR, SYSTEM_BOOT_DIR,
-    SYSTEM_BOOT_DIR .. "/lib", SYSTEM_BOOT_DIR .. "/licenses"
+    SYSTEM_APPS_DIR, SYSTEM_FILES_DIR, SYSTEM_BOOT_DIR
 }) do
     local path = fs.combine(SYSTEM_ROOT, directory)
     fs.makeDir(path)
@@ -198,16 +269,18 @@ if fs.exists(legacy_imports) and not fs.exists(boot_imports) then
     end
 end
 
-local legacy_apps_dir = fs.combine(SYSTEM_ROOT, ".candOS/legacy-apps")
+local legacy_apps_dir = fs.combine(".candOS", "legacy-apps")
 for _, name in ipairs(app_names) do
-    local package_path = fs.combine(SYSTEM_ROOT, SYSTEM_APPS_DIR,
+    local app_root = app_roots[name]
+    local package_path = fs.combine(app_root, SYSTEM_APPS_DIR,
         name .. ".app")
     if fs.exists(package_path) and not fs.isDir(package_path) then
-        local backup_path = fs.combine(legacy_apps_dir, name .. ".app")
-        fs.makeDir(legacy_apps_dir)
-        if not fs.exists(legacy_apps_dir) or not fs.isDir(legacy_apps_dir) then
+        local app_backup_dir = fs.combine(app_root, legacy_apps_dir)
+        local backup_path = fs.combine(app_backup_dir, name .. ".app")
+        fs.makeDir(app_backup_dir)
+        if not fs.exists(app_backup_dir) or not fs.isDir(app_backup_dir) then
             stop("No se pudo preparar el respaldo de apps antiguas en /" ..
-                legacy_apps_dir)
+                app_backup_dir)
             return
         end
         if fs.exists(backup_path) then
@@ -268,13 +341,9 @@ end
 print("")
 print("CANDOS se instalo correctamente.")
 print("El sistema esta en /" .. SYSTEM_ROOT .. "/" .. SYSTEM_BOOT_DIR .. ".")
-print("La mitad de tus apps esta en /" .. INSTALL_DIR .. "/" ..
-    SYSTEM_APPS_DIR .. " y la otra mitad en /" .. SYSTEM_ROOT .. "/" ..
-    SYSTEM_APPS_DIR .. ".")
+print("Las 30 apps y Basalt estan repartidos entre /disk, /disk2, /disk3 y /disk4.")
 print("Tus archivos nuevos se guardan en /" .. SYSTEM_ROOT .. "/" ..
     SYSTEM_FILES_DIR .. ".")
-print("Las apps antiguas reemplazadas se respaldan en /" ..
-    SYSTEM_ROOT .. "/.candOS/legacy-apps.")
+print("Las apps antiguas reemplazadas se respaldan en /.candOS/legacy-apps de cada disquete.")
 print("El inicio y el actualizador estan en /" .. INSTALL_DIR .. ".")
-print("La BIOS en /disk3 no se modifico.")
 print("Para actualizar, vuelve a ejecutar /" .. INSTALL_DIR .. "/installer.lua.")

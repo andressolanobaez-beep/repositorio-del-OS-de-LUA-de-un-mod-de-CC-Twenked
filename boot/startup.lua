@@ -180,8 +180,31 @@ _G.write = function(value)
     write_wrapped(tostring(value or ""), false)
 end
 
-local shell_path = fs.exists("/disk2/boot/shell.py") and "/disk2/boot/shell.py"
-    or fs.exists("/disk2/shell.py") and "/disk2/shell.py" or "shell.py"
+local shell_path
+for _, candidate in ipairs({
+    "/disk2/boot/shell.py",
+    "/disk2/shell.py"
+}) do
+    if fs.exists(candidate) then
+        shell_path = candidate
+        break
+    end
+end
+if not shell_path and type(peripheral.getNames) == "function" then
+    for _, name in ipairs(peripheral.getNames()) do
+        if peripheral.getType(name) == "drive" then
+            local drive = peripheral.wrap(name)
+            local mount = drive and type(drive.getMountPath) == "function"
+                and drive.getMountPath()
+            local candidate = mount and fs.combine(mount, "boot/shell.py")
+            if candidate and fs.exists(candidate) then
+                shell_path = candidate
+                break
+            end
+        end
+    end
+end
+shell_path = shell_path or "shell.py"
 local shell_chunk, shell_load_error = loadfile(shell_path)
 if not shell_chunk then
     error("No se pudo cargar " .. shell_path .. ": " .. tostring(shell_load_error))
@@ -202,15 +225,40 @@ else
     print("Aviso: shell.py no admite la carga de drivers; actualiza CANDOS.")
 end
 
-local basalt_path = fs.exists("/disk2/boot/lib/basalt.lua")
-    and "/disk2/boot/lib/basalt.lua" or "boot/lib/basalt.lua"
-local basalt_file, basalt_open_error = fs.open(basalt_path, "r")
-if not basalt_file then
-    error("No se pudo abrir Basalt en " .. basalt_path .. ": " ..
-        tostring(basalt_open_error))
+local function load_basalt_source()
+    local roots = {"disk", "disk2", "disk3", "disk4"}
+    local parts = {}
+    local missing_path
+    for index, root in ipairs(roots) do
+        local path = fs.combine(root, "boot/lib/basalt/part" .. index .. ".lua")
+        local file, open_error = fs.open(path, "r")
+        if not file then
+            missing_path = path .. ": " .. tostring(open_error)
+            parts = {}
+            break
+        end
+        parts[index] = file.readAll()
+        file.close()
+    end
+    if #parts == #roots then
+        return table.concat(parts), "Basalt dividido entre los cuatro disquetes"
+    end
+
+    local legacy_path = "/disk2/boot/lib/basalt.lua"
+    local legacy_file = fs.open(legacy_path, "r")
+    if legacy_file then
+        local source = legacy_file.readAll()
+        legacy_file.close()
+        return source, legacy_path
+    end
+    return nil, nil, "Falta " .. tostring(missing_path or
+        "Basalt en /disk2/boot/lib/basalt.lua")
 end
-local basalt_source = basalt_file.readAll()
-basalt_file.close()
+
+local basalt_source, basalt_path, basalt_open_error = load_basalt_source()
+if not basalt_source then
+    error("No se pudo cargar Basalt: " .. tostring(basalt_open_error))
+end
 local basalt_chunk, basalt_compile_error = load(basalt_source,
     "@" .. basalt_path, "t", _ENV)
 if not basalt_chunk then

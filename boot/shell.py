@@ -4,7 +4,8 @@
 local original_shell = shell
 local native_run = type(original_shell) == "table" and original_shell.run or nil
 local system_root
-local modern_layout = fs.exists("/disk2/boot/shell.py")
+local modern_layout = fs.exists("/disk2/boot/startup.lua")
+    or fs.exists("/disk2/boot/shell.py")
 if modern_layout then
     system_root = fs.combine("disk2")
 elseif fs.exists("/disk2/shell.py") then

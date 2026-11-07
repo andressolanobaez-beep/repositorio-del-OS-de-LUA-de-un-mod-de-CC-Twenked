@@ -31,11 +31,11 @@ end
 
 local function host_path(path)
     path = normalize(path)
-    if path == "disk2" then
+    local root, remainder = path:match("^(disk%d?)/(.*)$")
+    if root then
+        return remainder
+    elseif path:match("^disk%d?$") then
         return ""
-    end
-    if path:sub(1, 6) == "disk2/" then
-        return path:sub(7)
     end
     return path
 end
@@ -71,6 +71,18 @@ local app_names = {
     "tareas.app",
     "temporizador.app",
     "tres_en_raya.app"
+}
+local app_packages_by_disk = {
+    disk = {"archivador.app", "dispositivos.app", "quiz.app", "ppt.app",
+        "moneda.app"},
+    disk2 = {"red.app", "ajustes.app", "pong.app", "bloc.app",
+        "hardware.app", "notas.app"},
+    disk3 = {"candos_fps.app", "tres_en_raya.app", "memoria.app", "simon.app",
+        "matematicas.app", "adivina.app", "hola.app", "reloj.app",
+        "terminal.app"},
+    disk4 = {"carrera.app", "temporizador.app", "calendario.app", "palabra.app",
+        "calculadora.app", "reflejos.app", "convertidor.app", "mayor_menor.app",
+        "tareas.app", "dados.app"}
 }
 
 local test_input_source = [[
@@ -168,6 +180,7 @@ function api.update(event, side, x, y)
 end
 return api
 ]]
+local basalt_part_roots = {}
 local calculator_left, calculator_operator, calculator_right =
     ("-12.5 / 2"):match("^%s*(%-?[%d%.]+)%s*([%+%-%*/])%s*(%-?[%d%.]+)%s*$")
 check(tonumber(calculator_left) == -12.5 and calculator_operator == "/"
@@ -178,13 +191,21 @@ local system_files = {
     ["boot/buzzer.lua"] = true,
     ["boot/disk_manager.lua"] = true,
     ["boot/importing.txt"] = true,
-    ["boot/shell.py"] = true,
     ["boot/startup.lua"] = true,
-    ["boot/utils.lua"] = true,
-    ["boot/lib/basalt.lua"] = true
+    ["boot/utils.lua"] = true
 }
 
 local function host_exists(path)
+    path = normalize(path)
+    if path == "disk2/boot/shell.py" or path == "disk2/shell.py" then
+        return false
+    end
+    if path == "disk4/boot/shell.py" then
+        return true
+    end
+    if path:match("^disk%d?/boot/lib/basalt/part[1-4]%.lua$") then
+        return true
+    end
     path = host_path(path)
     if path == "apps/test_input.app/main.app"
         or path == "apps/test_input.app/icon.app" then
@@ -205,12 +226,13 @@ end
 local function host_is_dir(path)
     path = normalize(path)
     return path == ""
-        or path == "disk2"
-        or path == "disk2/apps"
+        or path:match("^disk%d?$")
+        or path:match("^disk%d?/apps$")
         or path == "disk2/files"
-        or path == "disk2/boot"
-        or path == "disk2/boot/lib"
-        or path == "disk2/boot/licenses"
+        or path:match("^disk%d?/boot$")
+        or path:match("^disk%d?/boot/lib$")
+        or path:match("^disk%d?/boot/lib/basalt$")
+        or path:match("^disk%d?/boot/licenses$")
         or path == "disk2/.candOS"
         or path == "."
         or path == "apps"
@@ -218,7 +240,7 @@ local function host_is_dir(path)
         or path == "boot/lib"
         or path == "apps/test_input.app"
         or path:match("^apps/[^/]+%.app$")
-        or path:match("^disk2/apps/[^/]+%.app$")
+        or path:match("^disk%d?/apps/[^/]+%.app$")
         or path == "storageA"
         or path == "storageB"
         or path == "storage20k"
@@ -233,19 +255,26 @@ fs = {
     isDir = host_is_dir,
     list = function(path)
         path = normalize(path)
-        if path == "disk2/apps" or path == "apps" then
+        if path:match("^disk%d?$") then
+            return {"apps"}
+        end
+        local app_disk, app_package_path = path:match("^(disk%d?)/apps$")
+        if app_disk or path == "apps" then
+            app_disk = app_disk or "disk2"
             local result = {}
-            for index, name in ipairs(app_names) do
+            for index, name in ipairs(app_packages_by_disk[app_disk] or {}) do
                 result[index] = name
             end
-            result[#result + 1] = "test_input.app"
+            if app_disk == "disk2" then
+                result[#result + 1] = "test_input.app"
+            end
             return result
         end
         if path == "disk2/.candOS" or path == "disk2/boot/lib"
             or path == "disk2/boot/licenses" or path == "disk2/files" then
             return {}
         end
-        if path:match("^disk2/apps/[^/]+%.app$") or path:match("^apps/[^/]+%.app$") then
+        if path:match("^disk%d?/apps/[^/]+%.app$") or path:match("^apps/[^/]+%.app$") then
             return {"icon.app", "main.app"}
         end
         if path == "storageA" or path == "storageB" or path == "storage20k" then
@@ -265,13 +294,25 @@ fs = {
             local contents = path == "disk2/boot/importing.txt"
                 and "# Simulator fixture: no startup imports.\n"
                 or ""
-            if path == "disk2/apps/test_input.app/main.app" then
+            local basename = host_path(path)
+            if basename == "apps/test_input.app/main.app" then
                 contents = test_input_source
-            elseif path:match("^disk2/apps/[^/]+%.app/icon%.app$") then
-                local package = path:match("^disk2/apps/([^/]+%.app)/icon%.app$")
+            elseif basename:match("^apps/[^/]+%.app/icon%.app$") then
+                local package = basename:match("^apps/([^/]+%.app)/icon%.app$")
                 contents = icon_fixtures[package] or "APP blue"
-            elseif path == "disk2/boot/lib/basalt.lua" then
-                contents = basalt_source
+            else
+                local part = path:match("^disk%d?/boot/lib/basalt/part([1-4])%.lua$")
+                if part then
+                    basalt_part_roots[tonumber(part)] =
+                        path:match("^(disk%d?)/")
+                    local fractions = {0.27, 0.38, 0.75, 1}
+                    local start = part == "1"
+                        and 1 or math.floor(#basalt_source * fractions[tonumber(part) - 1]) + 1
+                    local finish = part == "4"
+                        and #basalt_source
+                        or math.floor(#basalt_source * fractions[tonumber(part)])
+                    contents = basalt_source:sub(start, finish)
+                end
             end
             local closed = false
             return {
@@ -291,10 +332,9 @@ fs = {
 local native_loadfile = loadfile
 loadfile = function(path, mode, environment)
     path = tostring(path):gsub("\\", "/")
-    if path:sub(1, 7) == "/disk2/" then
-        path = path:sub(8)
-    elseif path:sub(1, 6) == "disk2/" then
-        path = path:sub(7)
+    local prefix = path:match("^/?disk%d?/")
+    if prefix then
+        path = path:sub(#prefix + 1)
     end
     if mode == nil then
         return native_loadfile(path)
@@ -308,9 +348,13 @@ local screen = {}
 local monitor_writes = {}
 local monitor_1_only = false
 local terminal_write_count = 0
-local device_names = {"top", "drive_left", "drive_extra", "drive_20000",
-    "monitor_1", "printer_1", "modem_1"}
+local device_names = {"top", "drive_disk", "drive_disk3", "drive_disk4",
+    "drive_left", "drive_extra", "drive_20000", "monitor_1",
+    "printer_1", "modem_1"}
 local drive_mounts = {
+    drive_disk = "disk",
+    drive_disk3 = "disk3",
+    drive_disk4 = "disk4",
     drive_left = "storageA",
     drive_extra = "storageB",
     drive_20000 = "storage20k"
@@ -537,6 +581,10 @@ end
 
 run_until_events_exhausted(startup, "Fallo al arrancar")
 check(touch_index == #touch_events, "El lanzador no proceso todos los toques simulados")
+for index, expected_root in ipairs({"disk", "disk2", "disk3", "disk4"}) do
+    check(basalt_part_roots[index] == expected_root,
+        "No se cargo la parte " .. index .. " de Basalt desde " .. expected_root)
+end
 check(type(shell.load_imports) == "function", "shell.load_imports no fue exportada")
 check(type(shell.list_apps) == "function", "shell.list_apps no fue exportada")
 check(type(shell.start) == "function", "shell.start no fue exportada")
@@ -546,8 +594,9 @@ local apps = shell.list_apps()
 check(#apps == #app_names + 1, "Se esperaban " .. #app_names ..
     " apps instaladas y una app de prueba; se encontraron " .. #apps)
 local app_packages = 0
+local app_disk_counts = {}
 for _, app in ipairs(apps) do
-    check(app.main_path == "disk2/apps/" .. app.name .. "/main.app",
+    check(app.main_path == app.path .. "/main.app",
         "Una app empaquetada no apunta a main.app: " .. app.name)
     check(type(app.icon) == "string" and app.icon ~= ""
         and type(app.icon_color) == "string" and app.icon_color ~= "",
@@ -556,13 +605,18 @@ for _, app in ipairs(apps) do
         "icon.app usa un color no disponible: " .. app.icon_color)
     if app.name ~= "test_input.app" then
         app_packages = app_packages + 1
-        check(fs.exists("disk2/apps/" .. app.name .. "/icon.app"),
+        local root = app.path:match("^(disk%d?)/")
+        app_disk_counts[root] = (app_disk_counts[root] or 0) + 1
+        check(fs.exists(app.path .. "/icon.app"),
             "Falta icon.app en " .. app.name)
     end
 end
 check(app_packages == #app_names, "El simulador no encontro los 30 paquetes .app")
-check(shell.where("terminal") == "disk2/apps/terminal.app",
-    "No se encontro la app terminal en disk2/apps")
+check(app_disk_counts.disk == 5 and app_disk_counts.disk2 == 6
+    and app_disk_counts.disk3 == 9 and app_disk_counts.disk4 == 10,
+    "La distribucion de las 30 apps entre disquetes esta incompleta")
+check(shell.where("terminal") == "disk3/apps/terminal.app",
+    "No se encontro la app terminal en disk3/apps")
 check(shell.resolve("/notas.txt") == "disk2/files/notas.txt",
     "Las rutas de usuario no se resolvieron desde /disk2/files")
 local device_list = shell.peripherals()
@@ -581,6 +635,8 @@ for _, entry in ipairs(paths) do
 end
 check(mounted.storageA and mounted.storageB and mounted.storage20k,
     "No se detectaron todas las unidades conectadas")
+check(mounted.disk and mounted.disk3 and mounted.disk4,
+    "No se detectaron las apps distribuidas entre los cuatro disquetes")
 
 local launcher_visible = false
 for _, write in ipairs(monitor_writes) do
@@ -735,8 +791,181 @@ check(screen[1]:find("CANDOS: falta monitor principal", 1, true) ~= nil,
 check(terminal_write_count == previous_terminal_writes,
     "El sistema intento usar la terminal principal de la PC")
 
+local install_storage = {
+    ["disk/installer.lua"] = "installer fixture source\n",
+    ["disk2/files/user.txt"] = "keep this file",
+    ["disk2/boot/importing.txt"] = "# keep this configuration\n",
+    ["disk2/boot/lib/basalt.lua"] = string.rep("old basalt", 20000)
+}
+local install_dirs = {disk = true, disk2 = true, disk3 = true, disk4 = true}
+local install_capacity = 120000
+
+local function install_make_dir(path)
+    local current = ""
+    for part in normalize(path):gmatch("[^/]+") do
+        current = current == "" and part or current .. "/" .. part
+        install_dirs[current] = true
+    end
+end
+
+local function install_disk_usage(root)
+    local total = 0
+    for path, contents in pairs(install_storage) do
+        if path:sub(1, #root + 1) == root .. "/" then
+            total = total + #contents
+        end
+    end
+    return total
+end
+
+local install_fs = {
+    combine = normalize,
+    exists = function(path)
+        path = normalize(path)
+        return install_dirs[path] == true or install_storage[path] ~= nil
+    end,
+    isDir = function(path)
+        return install_dirs[normalize(path)] == true
+    end,
+    getDir = function(path)
+        return normalize(path):match("^(.*)/[^/]+$") or ""
+    end,
+    makeDir = install_make_dir,
+    delete = function(path)
+        path = normalize(path)
+        install_storage[path] = nil
+    end,
+    move = function(source, target)
+        source, target = normalize(source), normalize(target)
+        if install_storage[source] == nil then
+            error("No existe el archivo que se quiere mover: " .. source)
+        end
+        install_storage[target] = install_storage[source]
+        install_storage[source] = nil
+    end,
+    open = function(path, mode)
+        path = normalize(path)
+        if mode == "r" then
+            local contents = install_storage[path]
+            if contents == nil then
+                return nil, "No existe " .. path
+            end
+            return {
+                readAll = function()
+                    return contents
+                end,
+                close = function() end
+            }
+        end
+        if mode ~= "w" then
+            return nil, "Modo no soportado: " .. tostring(mode)
+        end
+
+        local root = path:match("^(disk%d?)/")
+        if not root then
+            return nil, "El destino no pertenece a un disquete: " .. path
+        end
+        return {
+            write = function(contents)
+                local previous = install_storage[path]
+                local used = install_disk_usage(root)
+                    - (previous and #previous or 0)
+                if used + #contents > install_capacity then
+                    error("Out of space")
+                end
+                install_storage[path] = contents
+            end,
+            close = function() end
+        }
+    end
+}
+
+local basalt_install_payload = string.rep("B", 180000)
+local install_errors = {}
+local install_environment = setmetatable({
+    fs = install_fs,
+    shell = {getRunningProgram = function()
+        return "disk/installer.lua"
+    end},
+    http = {
+        get = function(url)
+            local contents
+            if url:match("/docs/versions/basalt%-1%.6%.6%.lua$") then
+                contents = basalt_install_payload
+            elseif url:match("/LICENSE$") then
+                contents = "Basalt test license\n"
+            else
+                local path = url:match("raw%.githubusercontent%.com/[^/]+/[^/]+/[^/]+/(.+)$")
+                if not path then
+                    return nil, "URL no reconocida: " .. url
+                end
+                contents = "fixture:" .. path
+            end
+            return {
+                getResponseCode = function()
+                    return 200, "OK"
+                end,
+                readAll = function()
+                    return contents
+                end,
+                close = function() end
+            }
+        end
+    },
+    print = function() end,
+    write = function() end,
+    printError = function(message)
+        install_errors[#install_errors + 1] = tostring(message)
+    end,
+    read = function()
+        return "INSTALAR"
+    end
+}, {__index = _G})
+local install_chunk, installer_load_error =
+    native_loadfile("installer.lua", "t", install_environment)
+check(install_chunk ~= nil, "No se pudo cargar installer.lua: " ..
+    tostring(installer_load_error))
+local install_ok, install_error = xpcall(install_chunk, debug.traceback)
+check(install_ok, "El instalador fallo en los cuatro discos: " ..
+    tostring(install_error))
+check(#install_errors == 0, "El instalador reporto un error: " ..
+    table.concat(install_errors, "; "))
+
+for root, packages in pairs(app_packages_by_disk) do
+    for _, package in ipairs(packages) do
+        for _, member in ipairs({"main.app", "icon.app"}) do
+            local source = "apps/" .. package .. "/" .. member
+            local target = root .. "/apps/" .. package .. "/" .. member
+            check(install_storage[target] == "fixture:" .. source,
+                "La app " .. package .. " no se instalo correctamente en /" ..
+                    root)
+        end
+    end
+    check(install_disk_usage(root) <= install_capacity,
+        "El instalador excedio el espacio simulado de /" .. root)
+end
+
+local installed_basalt_parts = {}
+for index, root in ipairs({"disk", "disk2", "disk3", "disk4"}) do
+    local path = root .. "/boot/lib/basalt/part" .. index .. ".lua"
+    installed_basalt_parts[index] = install_storage[path]
+    check(installed_basalt_parts[index] ~= nil,
+        "Falta la parte " .. index .. " de Basalt en /" .. root)
+end
+check(table.concat(installed_basalt_parts) == basalt_install_payload,
+    "Las partes instaladas de Basalt no reconstruyen el archivo original")
+check(install_storage["disk4/boot/shell.py"] == "fixture:boot/shell.py",
+    "El shell no se instalo en /disk4/boot")
+check(install_storage["disk2/files/user.txt"] == "keep this file",
+    "La instalacion elimino un archivo del usuario")
+check(install_storage["disk2/boot/importing.txt"] ==
+    "# keep this configuration\n",
+    "La instalacion reemplazo la configuracion existente")
+check(install_storage["disk2/boot/lib/basalt.lua"] == nil,
+    "No se elimino el Basalt monolitico que ocupaba espacio")
+
 io.write(string.format(
-    "PASS: %d archivos Lua validos; %d apps; arranque grafico sin terminal principal; input grafico, pausa y cierre comprobados.\n",
+    "PASS: %d archivos Lua validos; %d apps; instalador verificado en cuatro discos; arranque grafico, input, pausa y cierre comprobados.\n",
     #lua_files,
     #app_names
 ))
