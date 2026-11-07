@@ -181,6 +181,7 @@ end
 return api
 ]]
 local basalt_part_roots = {}
+local basalt_part_mounts = {"basalt_media", "disk2", "disk3", "disk4"}
 local calculator_left, calculator_operator, calculator_right =
     ("-12.5 / 2"):match("^%s*(%-?[%d%.]+)%s*([%+%-%*/])%s*(%-?[%d%.]+)%s*$")
 check(tonumber(calculator_left) == -12.5 and calculator_operator == "/"
@@ -197,13 +198,18 @@ local system_files = {
 
 local function host_exists(path)
     path = normalize(path)
-    if path == "disk2/boot/shell.py" or path == "disk2/shell.py" then
+    if path == "disk2/shell.py" then
         return false
+    end
+    if path == "disk2/boot/shell.py" then
+        return true
     end
     if path == "disk4/boot/shell.py" then
         return true
     end
-    if path:match("^disk%d?/boot/lib/basalt/part[1-4]%.lua$") then
+    local basalt_root, basalt_part =
+        path:match("^(.+)/boot/lib/basalt/part([1-4])%.lua$")
+    if basalt_root and basalt_root == basalt_part_mounts[tonumber(basalt_part)] then
         return true
     end
     path = host_path(path)
@@ -232,6 +238,7 @@ local function host_is_dir(path)
         or path:match("^disk%d?/boot$")
         or path:match("^disk%d?/boot/lib$")
         or path:match("^disk%d?/boot/lib/basalt$")
+        or path == "basalt_media"
         or path:match("^disk%d?/boot/licenses$")
         or path == "disk2/.candOS"
         or path == "."
@@ -255,6 +262,9 @@ fs = {
     isDir = host_is_dir,
     list = function(path)
         path = normalize(path)
+        if path == "basalt_media" then
+            return {}
+        end
         if path:match("^disk%d?$") then
             return {"apps"}
         end
@@ -301,10 +311,11 @@ fs = {
                 local package = basename:match("^apps/([^/]+%.app)/icon%.app$")
                 contents = icon_fixtures[package] or "APP blue"
             else
-                local part = path:match("^disk%d?/boot/lib/basalt/part([1-4])%.lua$")
+                local part_root, part = path:match(
+                    "^(.+)/boot/lib/basalt/part([1-4])%.lua$")
                 if part then
                     basalt_part_roots[tonumber(part)] =
-                        path:match("^(disk%d?)/")
+                        part_root
                     local fractions = {0.27, 0.38, 0.75, 1}
                     local start = part == "1"
                         and 1 or math.floor(#basalt_source * fractions[tonumber(part) - 1]) + 1
@@ -330,8 +341,12 @@ fs = {
 }
 
 local native_loadfile = loadfile
+local loaded_shell_path
 loadfile = function(path, mode, environment)
     path = tostring(path):gsub("\\", "/")
+    if path:match("boot/shell%.py$") then
+        loaded_shell_path = path
+    end
     local prefix = path:match("^/?disk%d?/")
     if prefix then
         path = path:sub(#prefix + 1)
@@ -349,12 +364,14 @@ local monitor_writes = {}
 local monitor_1_only = false
 local terminal_write_count = 0
 local device_names = {"top", "drive_disk", "drive_disk3", "drive_disk4",
+    "drive_basalt",
     "drive_left", "drive_extra", "drive_20000", "monitor_1",
     "printer_1", "modem_1"}
 local drive_mounts = {
     drive_disk = "disk",
     drive_disk3 = "disk3",
     drive_disk4 = "disk4",
+    drive_basalt = "basalt_media",
     drive_left = "storageA",
     drive_extra = "storageB",
     drive_20000 = "storage20k"
@@ -581,7 +598,9 @@ end
 
 run_until_events_exhausted(startup, "Fallo al arrancar")
 check(touch_index == #touch_events, "El lanzador no proceso todos los toques simulados")
-for index, expected_root in ipairs({"disk", "disk2", "disk3", "disk4"}) do
+check(loaded_shell_path == "disk4/boot/shell.py",
+    "El arranque eligio el shell antiguo de /disk2 en vez del shell actualizado")
+for index, expected_root in ipairs(basalt_part_mounts) do
     check(basalt_part_roots[index] == expected_root,
         "No se cargo la parte " .. index .. " de Basalt desde " .. expected_root)
 end

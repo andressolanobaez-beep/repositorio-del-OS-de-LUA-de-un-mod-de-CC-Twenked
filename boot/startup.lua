@@ -180,27 +180,52 @@ _G.write = function(value)
     write_wrapped(tostring(value or ""), false)
 end
 
+local function mounted_drive_roots()
+    local roots, seen = {}, {}
+    if type(peripheral.getNames) == "function" then
+        for _, name in ipairs(peripheral.getNames()) do
+            if peripheral.getType(name) == "drive" then
+                local drive = peripheral.wrap(name)
+                local mount = drive and type(drive.getMountPath) == "function"
+                    and drive.getMountPath()
+                if mount then
+                    mount = fs.combine(mount)
+                    if not seen[mount:lower()] then
+                        seen[mount:lower()] = true
+                        roots[#roots + 1] = mount
+                    end
+                end
+            end
+        end
+    end
+    return roots
+end
+
+local drive_roots = mounted_drive_roots()
 local shell_path
+for _, root in ipairs(drive_roots) do
+    if root:lower() ~= "disk2" then
+        local candidate = fs.combine(root, "boot/shell.py")
+        if fs.exists(candidate) then
+            shell_path = candidate
+            break
+        end
+    end
+end
 for _, candidate in ipairs({
     "/disk2/boot/shell.py",
     "/disk2/shell.py"
 }) do
-    if fs.exists(candidate) then
+    if not shell_path and fs.exists(candidate) then
         shell_path = candidate
-        break
     end
 end
-if not shell_path and type(peripheral.getNames) == "function" then
-    for _, name in ipairs(peripheral.getNames()) do
-        if peripheral.getType(name) == "drive" then
-            local drive = peripheral.wrap(name)
-            local mount = drive and type(drive.getMountPath) == "function"
-                and drive.getMountPath()
-            local candidate = mount and fs.combine(mount, "boot/shell.py")
-            if candidate and fs.exists(candidate) then
-                shell_path = candidate
-                break
-            end
+if not shell_path then
+    for _, root in ipairs(drive_roots) do
+        local candidate = fs.combine(root, "boot/shell.py")
+        if fs.exists(candidate) then
+            shell_path = candidate
+            break
         end
     end
 end
@@ -226,33 +251,51 @@ else
 end
 
 local function load_basalt_source()
-    local roots = {"disk", "disk2", "disk3", "disk4"}
-    local parts = {}
-    local missing_path
-    for index, root in ipairs(roots) do
-        local path = fs.combine(root, "boot/lib/basalt/part" .. index .. ".lua")
-        local file, open_error = fs.open(path, "r")
-        if not file then
-            missing_path = path .. ": " .. tostring(open_error)
-            parts = {}
-            break
-        end
-        parts[index] = file.readAll()
-        file.close()
+    local roots, seen = {}, {}
+    for _, root in ipairs({"disk", "disk2", "disk3", "disk4"}) do
+        roots[#roots + 1] = root
+        seen[root:lower()] = true
     end
-    if #parts == #roots then
+    for _, root in ipairs(drive_roots) do
+        if not seen[root:lower()] then
+            roots[#roots + 1] = root
+            seen[root:lower()] = true
+        end
+    end
+    local parts = {}
+    local missing_parts = {}
+    for index = 1, 4 do
+        for _, root in ipairs(roots) do
+            local part_path = fs.combine(root,
+                "boot/lib/basalt/part" .. index .. ".lua")
+            local file = fs.open(part_path, "r")
+            if file then
+                parts[index] = file.readAll()
+                file.close()
+                break
+            end
+        end
+    end
+    for index = 1, 4 do
+        if not parts[index] then
+            missing_parts[#missing_parts + 1] = "parte " .. index
+        end
+    end
+    if #missing_parts == 0 then
         return table.concat(parts), "Basalt dividido entre los cuatro disquetes"
     end
 
-    local legacy_path = "/disk2/boot/lib/basalt.lua"
-    local legacy_file = fs.open(legacy_path, "r")
-    if legacy_file then
-        local source = legacy_file.readAll()
-        legacy_file.close()
-        return source, legacy_path
+    for _, root in ipairs(roots) do
+        local legacy_path = fs.combine(root, "boot/lib/basalt.lua")
+        local legacy_file = fs.open(legacy_path, "r")
+        if legacy_file then
+            local source = legacy_file.readAll()
+            legacy_file.close()
+            return source, legacy_path
+        end
     end
-    return nil, nil, "Falta " .. tostring(missing_path or
-        "Basalt en /disk2/boot/lib/basalt.lua")
+    return nil, nil, "Faltan " .. table.concat(missing_parts, ", ") ..
+        " de Basalt. Conecta los cuatro disquetes de CANDOS y vuelve a instalar."
 end
 
 local basalt_source, basalt_path, basalt_open_error = load_basalt_source()
