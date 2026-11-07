@@ -93,11 +93,22 @@ local function modems()
     return result
 end
 
+local function call_rednet(method, ...)
+    if type(rednet) ~= "table" or type(rednet[method]) ~= "function" then
+        return false, "La funcion rednet." .. method .. "() no esta disponible."
+    end
+    local ok, result = pcall(rednet[method], ...)
+    if not ok then
+        return false, tostring(result)
+    end
+    return true, result
+end
+
 local function broadcast()
     if not discovery then
-        return
+        return false
     end
-    rednet.broadcast({
+    local ok, err = call_rednet("broadcast", {
         kind = "hello",
         os = "CANDOS",
         kernel = "CANDOS Lua",
@@ -105,6 +116,10 @@ local function broadcast()
         label = os.getComputerLabel() or ("PC " .. os.getComputerID()),
         role = role
     }, protocol)
+    if not ok then
+        message = "No se pudo buscar equipos: " .. err
+    end
+    return ok
 end
 
 local function set_discovery(enabled)
@@ -117,17 +132,41 @@ local function set_discovery(enabled)
         message = "No hay modems conectados. Conecta uno y vuelve a intentar."
         return
     end
+    local opened = 0
+    local failures = {}
     for _, name in ipairs(found) do
         if enabled then
-            rednet.open(name)
-        elseif rednet.isOpen(name) then
-            rednet.close(name)
+            local ok, err = call_rednet("open", name)
+            if ok then
+                opened = opened + 1
+            else
+                failures[#failures + 1] = name .. ": " .. err
+            end
+        else
+            local is_open, state = call_rednet("isOpen", name)
+            if not is_open then
+                failures[#failures + 1] = name .. ": " .. state
+            elseif state then
+                local closed, close_error = call_rednet("close", name)
+                if not closed then
+                    failures[#failures + 1] = name .. ": " .. close_error
+                end
+            end
         end
+    end
+    if enabled and opened == 0 then
+        message = "No se pudo abrir ningun modem. " ..
+            table.concat(failures, " | ")
+        return
     end
     discovery = enabled
     if discovery then
-        broadcast()
-        message = "Buscando CANDOS. Acepta cada vinculo manualmente."
+        if broadcast() then
+            message = #failures > 0
+                and ("Buscando con algunos modems; errores: " ..
+                    table.concat(failures, " | "))
+                or "Buscando CANDOS. Acepta cada vinculo manualmente."
+        end
         timer_id = os.startTimer(4)
     else
         if timer_id then
@@ -135,6 +174,9 @@ local function set_discovery(enabled)
             timer_id = nil
         end
         message = "Deteccion apagada."
+        if #failures > 0 then
+            message = message .. " Errores: " .. table.concat(failures, " | ")
+        end
     end
 end
 
@@ -171,7 +213,7 @@ local function receive_peer(id, data)
         peer.state = "emparejado"
         remember_peer(id)
     elseif data.kind == "hello" and peer.state == "emparejado" then
-        rednet.send(id, {
+        local ok, err = call_rednet("send", id, {
             kind = "hello",
             os = "CANDOS",
             kernel = "CANDOS Lua",
@@ -179,6 +221,9 @@ local function receive_peer(id, data)
             label = os.getComputerLabel() or ("PC " .. os.getComputerID()),
             role = role
         }, protocol)
+        if not ok then
+            message = "No se pudo responder a PC " .. id .. ": " .. err
+        end
     end
 end
 
@@ -255,19 +300,27 @@ while true do
             local peer = visible_peers()[row_index]
             if peer and discovery then
                 if peer.state == "disponible" then
-                    rednet.send(peer.id, {
+                    local ok, err = call_rednet("send", peer.id, {
                         kind = "request", os = "CANDOS",
                         kernel = "CANDOS Lua", role = role
                     }, protocol)
-                    peer.state = "solicitud_enviada"
-                    message = "Solicitud enviada a " .. peer.label .. "."
+                    if ok then
+                        peer.state = "solicitud_enviada"
+                        message = "Solicitud enviada a " .. peer.label .. "."
+                    else
+                        message = "No se pudo enviar la solicitud: " .. err
+                    end
                 elseif peer.state == "solicitud" then
-                    rednet.send(peer.id, {
+                    local ok, err = call_rednet("send", peer.id, {
                         kind = "accept", os = "CANDOS",
                         kernel = "CANDOS Lua", role = role
                     }, protocol)
-                    peer.state = "emparejado"
-                    remember_peer(peer.id)
+                    if ok then
+                        peer.state = "emparejado"
+                        remember_peer(peer.id)
+                    else
+                        message = "No se pudo aceptar la solicitud: " .. err
+                    end
                 end
             end
         end

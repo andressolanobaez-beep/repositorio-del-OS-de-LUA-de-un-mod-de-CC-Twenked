@@ -590,6 +590,90 @@ for _, path in ipairs(lua_files) do
         tostring(syntax_error))
 end
 
+local red_app_messages = {}
+local red_app_events = {
+    {"monitor_touch", "top", 5, height},
+    {"monitor_touch", "top", 45, height}
+}
+local red_app_event_index = 0
+local red_app_environment = setmetatable({
+    candOS = {
+        graphics = {
+            clear = function() end,
+            text = function(_, _, text)
+                red_app_messages[#red_app_messages + 1] = tostring(text)
+            end,
+            button = function() end,
+            panel = function() end,
+            centerText = function() end
+        },
+        monitor = monitor,
+        monitor_side = "top"
+    },
+    shell = {
+        resolve = function()
+            return "candOS-config"
+        end,
+        peripherals = function()
+            return {{name = "modem_1", type = "modem"}}
+        end
+    },
+    fs = {
+        combine = normalize,
+        exists = function()
+            return false
+        end,
+        open = function()
+            return nil, "No existe"
+        end,
+        makeDir = function() end
+    },
+    os = {
+        getComputerID = function()
+            return 1
+        end,
+        getComputerLabel = function()
+            return "simulador"
+        end,
+        clock = function()
+            return 0
+        end,
+        startTimer = function()
+            return 1
+        end,
+        cancelTimer = function() end,
+        pullEvent = function()
+            red_app_event_index = red_app_event_index + 1
+            local event = red_app_events[red_app_event_index]
+            check(event ~= nil, "La app Red pidio eventos inesperados")
+            return table.unpack(event)
+        end
+    },
+    rednet = {
+        open = function()
+            error("Modem desconectado durante la apertura")
+        end,
+        isOpen = function()
+            return false
+        end,
+        close = function() end,
+        broadcast = function() end,
+        send = function() end
+    },
+    colors = colors
+}, {__index = _G})
+local red_app_chunk, red_app_load_error =
+    native_loadfile("apps/red.app/main.app", "t", red_app_environment)
+check(red_app_chunk ~= nil, "No se pudo cargar Red CANDOS: " ..
+    tostring(red_app_load_error))
+local red_app_ok, red_app_error = xpcall(red_app_chunk, debug.traceback)
+check(red_app_ok, "Red CANDOS se cerro tras fallar la apertura del modem: " ..
+    tostring(red_app_error))
+local red_app_error_message = table.concat(red_app_messages, "\n")
+check(red_app_error_message:find("No se pudo abrir ningun modem", 1, true) ~= nil
+    and red_app_error_message:find("Modem desconectado", 1, true) ~= nil,
+    "Red CANDOS no mostro el error al fallar la busqueda")
+
 local function run_until_events_exhausted(entry, message)
     local ok, runtime_error = xpcall(entry, debug.traceback)
     check(not ok and tostring(runtime_error):find(SIMULATOR_END, 1, true),
