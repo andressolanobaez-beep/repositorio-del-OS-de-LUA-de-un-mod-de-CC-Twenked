@@ -85,9 +85,20 @@ end
 
 local function modems()
     local result = {}
-    for _, device in ipairs(shell.peripherals()) do
-        if device.type == "modem" then
-            result[#result + 1] = device.name
+    if type(peripheral) == "table"
+        and type(peripheral.getNames) == "function"
+        and type(peripheral.getType) == "function" then
+        for _, name in ipairs(peripheral.getNames()) do
+            if peripheral.getType(name) == "modem" then
+                result[#result + 1] = name
+            end
+        end
+    elseif type(shell) == "table"
+        and type(shell.peripherals) == "function" then
+        for _, device in ipairs(shell.peripherals()) do
+            if device.type == "modem" then
+                result[#result + 1] = device.name
+            end
         end
     end
     return result

@@ -613,9 +613,14 @@ local red_app_environment = setmetatable({
     shell = {
         resolve = function()
             return "candOS-config"
+        end
+    },
+    peripheral = {
+        getNames = function()
+            return {"modem_1"}
         end,
-        peripherals = function()
-            return {{name = "modem_1", type = "modem"}}
+        getType = function(name)
+            return name == "modem_1" and "modem" or nil
         end
     },
     fs = {

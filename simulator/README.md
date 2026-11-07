@@ -18,9 +18,10 @@ disks, runs the installer against four capacity-limited disk fixtures, checks
 Basalt loading from dynamically mounted disks, and verifies existing user
 files and configuration survive installation. It also tests discovery of
 dynamically named drives, monitors, printers, and modems, compatibility with
-older shell APIs, graphical `input()`/`io.read()`, bordered Basalt keyboard
-controls, and pausing, resuming, and closing an app. Startup must report a
-missing main monitor on `monitor_1` without writing to the computer terminal.
+older shell APIs, Red CANDOS modem discovery without `shell.peripherals()`,
+graphical `input()`/`io.read()`, bordered Basalt keyboard controls, and
+pausing, resuming, and closing an app. Startup must report a missing main
+monitor on `monitor_1` without writing to the computer terminal.
 
 The **Dispositivos** app lists peripherals as they connect and disconnect.
 The **Red CANDOS** app searches only after the user enables discovery; PCs need
